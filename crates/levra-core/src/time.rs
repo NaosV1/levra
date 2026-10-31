@@ -38,6 +38,30 @@ pub fn parse_utc(text: &str) -> Option<u64> {
     u64::try_from(seconds).ok()
 }
 
+/// Today's date (UTC) as `2026-10-31`, for file names.
+pub fn today() -> String {
+    let (year, month, day) = civil_from_days((unix_seconds(SystemTime::now()) / 86_400) as i64);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// L'inverse de [`days_from_civil`], tjs Howard Hinnant.
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let days = days + 719_468;
+    let era = days.div_euclid(146_097);
+    let day_of_era = days - era * 146_097;
+    let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
 /// Days since 1970-01-01 in the proleptic Gregorian calendar
 /// (Howard Hinnant's `days_from_civil`).
 fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
@@ -52,6 +76,15 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn civil_dates_round_trip() {
+        for days in [0, 19_000, 20_757, -1, 365 * 400] {
+            let (y, m, d) = civil_from_days(days);
+            assert_eq!(days_from_civil(y, m, d), days);
+        }
+        assert_eq!(civil_from_days(20_757), (2026, 10, 31));
+    }
 
     #[test]
     fn parses_simctl_timestamps() {
