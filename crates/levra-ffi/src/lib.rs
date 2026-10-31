@@ -316,6 +316,8 @@ pub struct NodeInfo {
     pub items: u64,
     pub modified: Option<u64>,
     pub has_children: bool,
+    /// Chemin complet, calculé une fois ici plutôt qu'à chq rendu côté Swift.
+    pub path: String,
     /// Whether the core's guard lets it go to the Trash: macOS's own files
     /// and the user's top-level folders do not.
     pub removable: bool,
@@ -331,6 +333,7 @@ pub struct ExploreTree {
 impl ExploreTree {
     fn info(&self, id: core::NodeId) -> Option<NodeInfo> {
         let node = self.tree.node(id)?;
+        let path = self.tree.path(id)?;
         Some(NodeInfo {
             id: id as u64,
             name: node.name.clone(),
@@ -344,10 +347,8 @@ impl ExploreTree {
             modified: node.modified.map(core::time::unix_seconds),
             has_children: !self.tree.children(id).is_empty(),
             removable: node.kind != core::NodeKind::SmallFiles
-                && self
-                    .tree
-                    .path(id)
-                    .is_some_and(|path| core::guard::check_removable(&path, &self.home).is_ok()),
+                && core::guard::check_removable(&path, &self.home).is_ok(),
+            path: text(&path),
         })
     }
 
