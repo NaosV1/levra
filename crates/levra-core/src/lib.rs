@@ -5,6 +5,7 @@
 //! re-checks each path with [`guard::check_removable`] right before acting.
 
 pub mod apps;
+pub mod archive;
 pub mod catalog;
 pub mod debloat;
 pub mod duplicates;
