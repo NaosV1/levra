@@ -1,7 +1,8 @@
 # Pushing a tag such as v0.2.0 publishes a GitHub release with the disk
-# image that scripts/release.sh builds: signed with Developer ID, notarized
-# and stapled. The tag must match CFBundleShortVersionString in
-# app/Info.plist. The secrets it needs are listed in README.md.
+# image that scripts/release.sh builds (signed with Developer ID, notarized
+# and stapled) and the appcast through which installed copies update to it.
+# The tag must match CFBundleShortVersionString in app/Info.plist. The
+# secrets it needs are listed in README.md.
 name: Release
 
 on:
@@ -17,6 +18,9 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The build number is the number of commits.
+          fetch-depth: 0
 
       - name: Version
         run: |
@@ -42,9 +46,19 @@ jobs:
       - name: Build, signature et notarisation
         run: LEVRA_NOTARY_PROFILE=levra scripts/release.sh
 
+      - name: Appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "::error::Secret SPARKLE_PRIVATE_KEY manquant : voir « Mises à jour » dans README.md."
+            exit 1
+          fi
+          scripts/appcast.sh build/Levra.app "build/Levra-$VERSION.dmg" > build/appcast.xml
+
       - name: Publication
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "build/Levra-$VERSION.dmg" \
+          gh release create "$GITHUB_REF_NAME" "build/Levra-$VERSION.dmg" build/appcast.xml \
             --title "Levra $VERSION" --generate-notes --verify-tag

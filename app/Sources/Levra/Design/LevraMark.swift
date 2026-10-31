@@ -1,9 +1,10 @@
 import SwiftUI
 
 /// Levra's mark: an open square whose last stroke flies off, on a dark
-/// tile. Drawn here once, for the app (sidebar, welcome) and for the app
-/// icon, which scripts/artwork.swift renders from this view. Nothing else
-/// of the app is used here, so that the script can compile this file alone.
+/// tile. Drawn here once, for the app (sidebar, welcome, menu bar) and for
+/// the app icon, which scripts/artwork.swift renders from this view.
+/// Nothing else of the app is used here, so that the script can compile
+/// this file alone.
 struct LevraMark: View {
     var size: CGFloat
 
@@ -24,6 +25,29 @@ struct LevraMark: View {
     private static let tileBottom = Color(red: 0x0E / 255, green: 0x0E / 255, blue: 0x10 / 255)
     private static let stroke = Color(red: 0xED / 255, green: 0xED / 255, blue: 0xEF / 255)
     private static let accent = Color(red: 0x7C / 255, green: 0x86 / 255, blue: 0xE2 / 255)
+}
+
+/// The mark's strokes alone, in the foreground colour, without the tile
+/// and cropped to them: for the menu bar, where icons are a single colour.
+struct LevraGlyph: View {
+    var size: CGFloat
+
+    var body: some View {
+        // The strokes span 53 units of the grid, around (53.5, 45.5); a
+        // little heavier than on the tile, to hold at this size.
+        let grid = size / (0.53 + Self.weight)
+        let style = StrokeStyle(lineWidth: grid * Self.weight, lineCap: .round, lineJoin: .round)
+        ZStack {
+            OpenSquare().stroke(style: style)
+            FlyingStroke().stroke(style: style)
+        }
+        .frame(width: grid, height: grid)
+        .offset(x: (50 - 53.5) * grid / 100, y: (50 - 45.5) * grid / 100)
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+
+    private static let weight: CGFloat = 0.065
 }
 
 /// On a 100-unit grid: a rounded square open at its top-right corner.

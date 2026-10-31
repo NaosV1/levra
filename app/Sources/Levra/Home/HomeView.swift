@@ -7,7 +7,6 @@ struct HomeView: View {
     @Environment(AppModel.self) private var app
     @State private var confirmingEmpty = false
     @State private var emptyRefusal: String?
-    @State private var emptying = false
 
     var body: some View {
         PageScroll {
@@ -107,7 +106,7 @@ struct HomeView: View {
                 ? "Visible avec l'accès complet au disque ; le Finder peut la vider quand même."
                 : "supprimés définitivement en la vidant."
         ) {
-            if emptying {
+            if app.emptyingTrash {
                 Spinner(size: 16)
             } else {
                 Button("Vider…") { confirmingEmpty = true }
@@ -147,13 +146,7 @@ struct HomeView: View {
     }
 
     private func emptyTrash() {
-        emptying = true
-        Task {
-            emptyRefusal = await SystemTrash.empty()
-            emptying = false
-            app.refreshTrash()
-            app.refreshDisk()
-        }
+        Task { emptyRefusal = await app.emptyTrash() }
     }
 }
 
@@ -163,23 +156,7 @@ private struct DiskHero: View {
 
     var body: some View {
         HStack(spacing: 24) {
-            ZStack {
-                Circle().stroke(Theme.border, lineWidth: 10)
-                Circle()
-                    .trim(from: 0, to: disk.used)
-                    .stroke(tint, style: StrokeStyle(lineWidth: 10, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                VStack(spacing: 1) {
-                    Text("\(Int((disk.used * 100).rounded())) %")
-                        .font(.system(size: 20, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(Theme.textPrimary)
-                    Text("utilisé")
-                        .textStyle(.caption)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-            }
-            .frame(width: 112, height: 112)
-            .animation(Motion.snappy, value: disk.used)
+            DiskRing(disk: disk)
             VStack(alignment: .leading, spacing: 6) {
                 Text("\(Format.bytes(UInt64(max(disk.available, 0)))) libres")
                     .font(.system(size: 30, weight: .semibold))
@@ -194,10 +171,6 @@ private struct DiskHero: View {
         .padding(24)
         .card()
         .accessibilityElement(children: .combine)
-    }
-
-    private var tint: Color {
-        disk.used > 0.9 ? Theme.danger : disk.used > 0.75 ? Theme.warning : Theme.accent
     }
 }
 

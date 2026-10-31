@@ -23,12 +23,19 @@ struct LevraApp: App {
         // The sidebar runs to the top; the window buttons sit on it.
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1120, height: 740)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Rechercher les mises à jour…") { model.updates.check() }
+                    .disabled(!model.updates.canCheck)
+            }
+        }
 
         MenuBarExtra {
             MenuBarView().environment(model)
         } label: {
-            Label(model.disk.map { Format.bytes(UInt64(max($0.available, 0))) } ?? "Levra", systemImage: "internaldrive")
+            MenuBarLabel(model: model)
         }
+        .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView().environment(model)
@@ -36,9 +43,67 @@ struct LevraApp: App {
     }
 }
 
+/// The menu bar icon. Its view lives as long as the app, window closed or
+/// not, which makes it the one place able to reopen the window for the
+/// rest of the app: SwiftUI opens windows from views only.
+private struct MenuBarLabel: View {
+    let model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    /// Levra's glyph as a template image, which the menu bar draws in its
+    /// own colour, light or dark, like its other icons.
+    @MainActor private static let icon: NSImage = {
+        let renderer = ImageRenderer(content: LevraGlyph(size: 16))
+        renderer.scale = 2
+        let image = renderer.nsImage ?? NSImage()
+        image.isTemplate = true
+        return image
+    }()
+
+    var body: some View {
+        Image(nsImage: Self.icon)
+            .accessibilityLabel("Levra")
+            .onAppear {
+                model.windowOpener = {
+                    openWindow(id: "main")
+                    NSApplication.shared.activate()
+                }
+            }
+    }
+}
+
+/// Levra is in the Dock only while one of its windows is open: once they
+/// are closed, it lives on in the menu bar, uninstall detection included.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Closing the window keeps the menu bar item and uninstall detection.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(windowBecameKey), name: NSWindow.didBecomeKeyNotification, object: nil)
+        center.addObserver(self, selector: #selector(windowWillClose), name: NSWindow.willCloseNotification, object: nil)
+    }
+
+    @objc private func windowBecameKey(_ note: Notification) {
+        guard let window = note.object as? NSWindow, Self.isAppWindow(window) else { return }
+        NSApplication.shared.setActivationPolicy(.regular)
+    }
+
+    @objc private func windowWillClose(_ note: Notification) {
+        guard let closing = note.object as? NSWindow, Self.isAppWindow(closing) else { return }
+        let othersOpen = NSApplication.shared.windows.contains {
+            $0 !== closing && $0.isVisible && Self.isAppWindow($0)
+        }
+        if !othersOpen {
+            NSApplication.shared.setActivationPolicy(.accessory)
+        }
+    }
+
+    /// The main window and Settings, as opposed to the menu bar panel,
+    /// alerts and sheets, which are panels.
+    private static func isAppWindow(_ window: NSWindow) -> Bool {
+        window.styleMask.contains(.titled) && !(window is NSPanel)
     }
 }

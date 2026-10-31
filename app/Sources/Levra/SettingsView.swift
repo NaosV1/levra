@@ -8,11 +8,19 @@ struct SettingsView: View {
 
     var body: some View {
         @Bindable var model = model
+        @Bindable var updates = model.updates
         Form {
             Section("Surveillance") {
                 Toggle("Repérer les apps supprimées et proposer d'effacer leurs restes", isOn: $model.watchUninstalls)
                 Picker("Alerter quand il reste moins de", selection: $model.lowSpaceGB) {
                     ForEach([10, 20, 50, 100], id: \.self) { Text("\($0) Go libres").tag($0) }
+                }
+            }
+            Section("Mises à jour") {
+                Toggle("Rechercher les mises à jour chaque jour", isOn: $updates.checksAutomatically)
+                LabeledContent("Version \(updates.version)") {
+                    Button("Rechercher maintenant") { updates.check() }
+                        .disabled(!updates.canCheck)
                 }
             }
             Section("Démarrage") {
@@ -41,6 +49,7 @@ struct SettingsView: View {
             }
             Section("À propos") {
                 LabeledContent("Icônes", value: "PapIcons, licence MIT © 2025 PapTools")
+                LabeledContent("Mises à jour", value: "Sparkle, licence MIT © Andy Matuschak et contributeurs")
             }
         }
         .formStyle(.grouped)

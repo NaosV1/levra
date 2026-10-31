@@ -128,7 +128,7 @@ Une fois sur le Mac qui publie :
    xcrun notarytool store-credentials levra --apple-id <adresse> --team-id <équipe>
    ```
 
-Puis, pour chaque version, après avoir augmenté `CFBundleShortVersionString` et `CFBundleVersion` dans `app/Info.plist` :
+Puis, pour chaque version, après avoir augmenté `CFBundleShortVersionString` dans `app/Info.plist` (le numéro de build, `CFBundleVersion`, est le nombre de commits : `scripts/build-app.sh` l'écrit dans le bundle) :
 
 ```sh
 LEVRA_NOTARY_PROFILE=levra scripts/release.sh
@@ -162,6 +162,18 @@ Pour les renseigner, ou les remplacer quand le certificat expire : exporter le c
 ```sh
 scripts/ci-secrets.sh chemin/vers/developer-id.p12
 ```
+
+### Mises à jour
+
+Levra se met à jour avec [Sparkle](https://sparkle-project.org). Une fois par jour (désactivable dans Réglages), l'app lit `appcast.xml` dans la dernière release GitHub (`SUFeedURL` dans `app/Info.plist`). Elle n'installe une version plus récente que si son image disque est signée avec la clé de Levra (`SUPublicEDKey`), en plus d'être notarisée par Apple. Sparkle compare les numéros de build ; les pré-versions `edge` ne sont pas proposées.
+
+Le workflow de release écrit l'appcast avec `scripts/appcast.sh`, qui signe l'image disque avec la clé privée du secret `SPARKLE_PRIVATE_KEY`. Cette clé a été créée une fois par l'outil de Sparkle, qui la garde aussi dans le trousseau du Mac qui l'a créée, sous le compte `levra` :
+
+```sh
+app/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account levra -p   # affiche la clé publique
+```
+
+Sans elle, plus aucune mise à jour ne peut atteindre les copies installées : en garder une sauvegarde en lieu sûr (`generate_keys --account levra -x fichier`).
 
 Le script demande les mots de passe sans les afficher, lit l'équipe dans le certificat, fait vérifier les identifiants par Apple (et les enregistre sous le profil `levra` de ce Mac, pour `scripts/release.sh`), puis envoie les cinq secrets à GitHub.
 

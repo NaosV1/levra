@@ -17,6 +17,7 @@ enum SystemTrash {
     @MainActor
     static func recycle(_ paths: [String]) async -> Outcome {
         guard !paths.isEmpty else { return Outcome() }
+        letFinderAsk()
         let refusal = await Task.detached(priority: .userInitiated) { askFinderToTrash(paths) }.value
         // The Finder may move some items and not others: what is still
         // there was not moved, whatever the reply says.
@@ -31,8 +32,10 @@ enum SystemTrash {
     /// Has the Finder empty the Trash, for good. The Finder asks for the
     /// password for items that need it, and needs no access from Levra.
     /// Returns why it refused, or `nil`.
+    @MainActor
     static func empty() async -> String? {
-        await Task.detached(priority: .userInitiated) {
+        letFinderAsk()
+        return await Task.detached(priority: .userInitiated) {
             let finder = NSAppleEventDescriptor(bundleIdentifier: "com.apple.finder")
             let event = NSAppleEventDescriptor(
                 eventClass: fourCharCode("fndr"),
@@ -78,11 +81,20 @@ enum SystemTrash {
         return send(event)
     }
 
+    /// The Finder may ask for the password only on behalf of the app in
+    /// front; from the menu bar panel, Levra is not, and the Finder gave up
+    /// without asking. Brought forward, Levra lets the Finder come forward
+    /// in turn (`canSwitchLayer`) when it has something to ask.
+    @MainActor
+    private static func letFinderAsk() {
+        NSApplication.shared.activate()
+    }
+
     /// Sends an event to the Finder and waits, long enough for the user to
     /// type the password. Returns why the Finder refused, or `nil`.
     private static func send(_ event: NSAppleEventDescriptor) -> String? {
         do {
-            let reply = try event.sendEvent(options: [.waitForReply, .canInteract], timeout: 600)
+            let reply = try event.sendEvent(options: [.waitForReply, .canInteract, .canSwitchLayer], timeout: 600)
             guard let code = reply.paramDescriptor(forKeyword: keyErrorNumber)?.int32Value, code != 0 else {
                 return nil
             }
@@ -100,7 +112,7 @@ enum SystemTrash {
 
     private static func refusal(_ code: Int32) -> String {
         switch code {
-        case -128: "Mot de passe non saisi : rien n'a été déplacé."
+        case -128: "Le mot de passe n'a pas été saisi."
         case -1743: "Levra n'a pas le droit de piloter le Finder : autorise-le dans Réglages Système › Confidentialité et sécurité › Automatisation."
         case -1712: "Le Finder n'a pas répondu à temps."
         default: "Le Finder a refusé (erreur \(code))."

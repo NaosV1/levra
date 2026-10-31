@@ -19,6 +19,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The build number is the number of commits.
+          fetch-depth: 0
 
       - name: Outils Rust
         run: rustup component add clippy rustfmt

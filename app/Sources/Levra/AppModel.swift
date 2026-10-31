@@ -60,11 +60,15 @@ final class AppModel {
     }
 
     var section: Section = .home
+    /// Opens the main window, set by the menu bar icon (see `MenuBarLabel`).
+    var windowOpener: (() -> Void)?
     private(set) var disk: DiskSpace?
     /// System memory figures, refreshed every minute (and by the memory view).
     private(set) var memoryStats: MemoryStatsInfo?
     /// Size of the Trash; `nil` until measured, or without Full Disk Access.
     private(set) var trashBytes: UInt64?
+    /// While the Finder empties the Trash.
+    private(set) var emptyingTrash = false
 
     let cleanup = CleanupModel()
     let explorer = ExplorerModel()
@@ -72,6 +76,7 @@ final class AppModel {
     let memory = MemoryModel()
     let apps = AppsModel()
     let debloat = DebloatModel()
+    let updates = Updates()
 
     var watchUninstalls: Bool {
         didSet {
@@ -111,11 +116,11 @@ final class AppModel {
             guard let self else { return }
             switch target {
             case .cleanup:
-                section = .cleanup
+                showWindow(.cleanup)
             case .memory:
-                section = .memory
+                showWindow(.memory)
             case let .uninstall(bundleId):
-                section = .apps
+                showWindow(.apps)
                 Task { await self.apps.prepareRemoved(bundleId: bundleId) }
             }
         }
@@ -138,6 +143,14 @@ final class AppModel {
         }
     }
 
+    /// Brings the window back, closed or not, on a page if one is given.
+    func showWindow(_ section: Section? = nil) {
+        if let section {
+            self.section = section
+        }
+        windowOpener?()
+    }
+
     /// The menu bar's one-click cleanup: the recommended findings only,
     /// reported by a notification since the window may be closed.
     func quickClean() async {
@@ -152,6 +165,16 @@ final class AppModel {
         Task {
             trashBytes = (try? await background { try trashSize() }) ?? nil
         }
+    }
+
+    /// Has the Finder empty the Trash; returns why it did not, if it did not.
+    func emptyTrash() async -> String? {
+        emptyingTrash = true
+        let refusal = await SystemTrash.empty()
+        emptyingTrash = false
+        refreshTrash()
+        refreshDisk()
+        return refusal
     }
 
     func refreshDisk() {

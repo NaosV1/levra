@@ -43,7 +43,7 @@ xcodebuild -create-xcframework \
 
 echo "→ App SwiftUI"
 swift build -c release --package-path app
-binary="$(swift build -c release --package-path app --show-bin-path)/Levra"
+products="$(swift build -c release --package-path app --show-bin-path)"
 
 # Drawn from the same LevraMark view as the mark inside the app.
 echo "→ Icône"
@@ -55,18 +55,44 @@ iconutil -c icns -o "$root/build/Levra.icns" "$root/build/Levra.iconset"
 
 echo "→ Bundle"
 rm -rf "$bundle"
-mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
-cp "$binary" "$bundle/Contents/MacOS/Levra"
+mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources" "$bundle/Contents/Frameworks"
+cp "$products/Levra" "$bundle/Contents/MacOS/Levra"
+# SwiftPM expects frameworks next to the executable; a bundle keeps them
+# in Contents/Frameworks.
+install_name_tool -add_rpath @executable_path/../Frameworks "$bundle/Contents/MacOS/Levra"
 cp app/Info.plist "$bundle/Contents/Info.plist"
+# Sparkle offers an update only when its build number is higher: the
+# number of commits, which only grows on main (CI needs the full history).
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git rev-list --count HEAD)" "$bundle/Contents/Info.plist"
 cp "$root/build/Levra.icns" "$bundle/Contents/Resources/Levra.icns"
+# Sparkle's XPC services are for sandboxed apps; Levra is not one.
+sparkle="$bundle/Contents/Frameworks/Sparkle.framework"
+ditto "$products/Sparkle.framework" "$sparkle"
+rm -rf "$sparkle/XPCServices" "$sparkle/Versions/B/XPCServices"
+
+# Inside out, as codesign requires: Sparkle's helpers, Sparkle, the app.
 identity="${LEVRA_SIGN_IDENTITY:--}"
+sign() {
+    if [ "$identity" = "-" ]; then
+        codesign --force --sign - --options runtime "$@"
+    else
+        # A secure timestamp is required for notarization.
+        codesign --force --sign "$identity" --options runtime --timestamp "$@"
+    fi
+}
+sign "$sparkle/Versions/B/Autoupdate"
+sign "$sparkle/Versions/B/Updater.app"
+sign "$sparkle"
+entitlements=app/Levra.entitlements
 if [ "$identity" = "-" ]; then
-    codesign --force --sign - --options runtime --entitlements app/Levra.entitlements "$bundle"
-else
-    # A secure timestamp is required for notarization.
-    codesign --force --sign "$identity" --options runtime --timestamp \
-        --entitlements app/Levra.entitlements "$bundle"
+    # The hardened runtime loads only frameworks signed by the app's team,
+    # and an ad hoc signature has none: test builds may load Sparkle all
+    # the same. Builds signed with Developer ID keep the check.
+    entitlements="$root/build/adhoc.entitlements"
+    cp app/Levra.entitlements "$entitlements"
+    /usr/libexec/PlistBuddy -c "Add :com.apple.security.cs.disable-library-validation bool true" "$entitlements"
 fi
+sign --entitlements "$entitlements" "$bundle"
 
 echo "✓ $bundle"
 if [ "${1:-}" = "--open" ]; then

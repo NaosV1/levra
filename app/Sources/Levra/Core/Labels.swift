@@ -121,6 +121,13 @@ extension Safety {
     }
 }
 
+extension DiskSpace {
+    /// Fine up to 75 % used, filling up to 90 %, then full.
+    var tone: Badge.Tone {
+        used > 0.9 ? .danger : used > 0.75 ? .warning : .success
+    }
+}
+
 extension MemoryPressure {
     var label: String {
         switch self {
