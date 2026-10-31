@@ -16,6 +16,22 @@ struct SettingsView: View {
                     ForEach([10, 20, 50, 100], id: \.self) { Text("\($0) Go libres").tag($0) }
                 }
             }
+            Section {
+                Picker("Nettoyage automatique", selection: $model.autoClean) {
+                    ForEach(AppModel.AutoClean.allCases) { Text($0.title).tag($0) }
+                }
+                if let next = model.nextAutoClean {
+                    LabeledContent("Prochain nettoyage") {
+                        Text(next <= .now ? "dans l'heure" : next.formatted(.relative(presentation: .named)))
+                    }
+                }
+            } header: {
+                Text("Nettoyage")
+            } footer: {
+                Text("Seuls les éléments sans risque partent (caches, fichiers qui se recréent), comme le nettoyage rapide de la barre des menus. Une notification dit ce qui a été libéré.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section("Mises à jour") {
                 Toggle("Rechercher les mises à jour chaque jour", isOn: $updates.checksAutomatically)
                 LabeledContent("Version \(updates.version)") {
