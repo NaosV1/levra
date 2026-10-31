@@ -1,6 +1,7 @@
-# Checks the Rust core, then builds the app on every push to main and every
-# pull request. The app is signed ad hoc: the zip on the run's page is for
-# testing, not for sharing (see "Distribution" in README.md).
+# Checks the Rust core and builds the disk image on every push to main and
+# every pull request. Each build of main replaces the "edge" pre-release, so
+# that the latest app is always at the same address. The app is signed ad
+# hoc: these builds are for testing (see "Distribution" in README.md).
 name: Build
 
 on:
@@ -9,13 +10,12 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 45
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
 
@@ -34,13 +34,42 @@ jobs:
       - name: App
         run: scripts/build-app.sh
 
-      # ditto keeps the bundle's symlinks and permissions, which a plain
-      # artifact upload would lose.
-      - name: Archive
-        run: ditto -c -k --keepParent build/Levra.app "build/Levra-${GITHUB_SHA:0:7}.zip"
+      - name: Image disque
+        run: scripts/make-dmg.sh build/Levra.app build/Levra.dmg
 
       - uses: actions/upload-artifact@v7
         with:
-          path: build/Levra-*.zip
+          path: build/Levra.dmg
           archive: false
-          retention-days: 30
+          retention-days: 14
+
+  # Apart from the build, so that the code of a pull request never runs with
+  # a token allowed to write to the repository.
+  publish:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: edge-release
+      cancel-in-progress: true
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: Levra.dmg
+
+      - name: Pré-version « edge »
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view edge >/dev/null 2>&1; then
+            gh release delete edge --cleanup-tag --yes
+          fi
+          gh release create edge Levra.dmg --target "$GITHUB_SHA" --prerelease \
+            --title "Levra – dernière version de main" \
+            --notes "Build automatique de ${GITHUB_SHA:0:7}, remplacé à chaque push sur main.
+
+          Pas encore signée par Apple : au premier lancement, macOS la bloque. Ouvre Réglages Système › Confidentialité et sécurité, puis « Ouvrir quand même »."

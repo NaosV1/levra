@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Levra's mark: an open square whose last stroke flies off, on a dark
 /// tile. Drawn here once, for the app (sidebar, welcome) and for the app
-/// icon, which scripts/make-icon.swift renders from this view. Nothing else
+/// icon, which scripts/artwork.swift renders from this view. Nothing else
 /// of the app is used here, so that the script can compile this file alone.
 struct LevraMark: View {
     var size: CGFloat

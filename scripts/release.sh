@@ -55,12 +55,7 @@ ditto -c -k --keepParent "$app" "$work/app.zip"
 notarize "$work/app.zip"
 xcrun stapler staple "$app"
 
-echo "→ Image disque"
-mkdir "$work/image"
-ditto "$app" "$work/image/Levra.app"
-ln -s /Applications "$work/image/Applications"
-rm -f "$dmg"
-hdiutil create -volname "Levra" -srcfolder "$work/image" -format UDZO "$dmg" >/dev/null
+scripts/make-dmg.sh "$app" "$dmg"
 codesign --sign "$identity" --timestamp "$dmg"
 notarize "$dmg"
 xcrun stapler staple "$dmg"

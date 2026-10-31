@@ -47,10 +47,10 @@ binary="$(swift build -c release --package-path app --show-bin-path)/Levra"
 
 # Drawn from the same LevraMark view as the mark inside the app.
 echo "→ Icône"
-swiftc -O -parse-as-library -o "$root/build/make-icon" \
-    scripts/make-icon.swift app/Sources/Levra/Design/LevraMark.swift
+swiftc -O -parse-as-library -o "$root/build/artwork" \
+    scripts/artwork.swift app/Sources/Levra/Design/LevraMark.swift
 rm -rf "$root/build/Levra.iconset"
-"$root/build/make-icon" "$root/build/Levra.iconset"
+"$root/build/artwork" icon "$root/build/Levra.iconset"
 iconutil -c icns -o "$root/build/Levra.icns" "$root/build/Levra.iconset"
 
 echo "→ Bundle"

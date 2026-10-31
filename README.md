@@ -36,7 +36,7 @@ Dans `app/Sources/Levra/Design` :
 | `Motion.swift` | Courbes et durées des animations, plus les transitions d'entrée et la cascade des listes. Les animations sont courtes et en « ease-out », jamais déclenchées par un raccourci clavier, et réduites à des fondus si « Réduire les animations » est activé. |
 | `Controls.swift`, `Surfaces.swift` | Composants : boutons, cases à cocher, pastilles, sélecteurs, cartes, bannières, états vides, barre d'action. |
 | `Papicons.swift` | Icônes [PapIcons](https://pub.dev/packages/papicons) converties en tracés SwiftUI par `scripts/papicons.py` (ne pas modifier à la main). |
-| `LevraMark.swift` | Le logo : un carré ouvert dont le dernier trait s'échappe. Il sert dans l'app et à l'icône, que `scripts/build-app.sh` dessine à chaque build (via `scripts/make-icon.swift`, au format du modèle d'icône macOS) : pour la changer, on ne modifie que ce fichier. |
+| `LevraMark.swift` | Le logo : un carré ouvert dont le dernier trait s'échappe. Il sert dans l'app et à l'icône, que `scripts/build-app.sh` dessine à chaque build (via `scripts/artwork.swift`, au format du modèle d'icône macOS) : pour la changer, on ne modifie que ce fichier. |
 
 Pour ajouter une icône, ajoute son nom à `ICONS` dans `scripts/papicons.py`, télécharge le paquet PapIcons, puis lance :
 
@@ -95,12 +95,15 @@ Dans `levra-core` :
 
 ## Build
 
-Prérequis : Rust ≥ 1.88, Xcode 16+ (Swift 6), Mac Apple Silicon.
+Prérequis : Rust ≥ 1.88, Xcode 16+ (Swift 6), Mac Apple Silicon ; Python ≥ 3.10 pour l'image disque.
 
 ```sh
 scripts/build-app.sh          # produit build/Levra.app (signée localement, runtime renforcé)
 scripts/build-app.sh --open   # et la lance
+scripts/make-dmg.sh build/Levra.app build/Levra.dmg   # l'image disque
 ```
+
+L'image disque montre l'app à côté d'un raccourci vers Applications, sur un fond qui invite à glisser l'une sur l'autre. `scripts/artwork.swift` dessine ce fond ; [dmgbuild](https://dmgbuild.readthedocs.io), installé par le script dans `build/dmgbuild` à une version fixe vérifiée par empreinte (`scripts/dmg/requirements.txt`), écrit la mise en page de la fenêtre sans piloter le Finder, ce qui marche aussi sur un serveur de build. Le Finder écrit le nom des icônes en noir ou en blanc selon l'apparence du Mac : le fond reste donc d'un ton moyen sous les noms, lisible dans les deux cas.
 
 Pour travailler sur l'interface dans Xcode : lancer le script une fois (il génère `app/Frameworks` et les bindings), puis ouvrir `app/Package.swift`.
 
@@ -135,7 +138,7 @@ Le script signe l'app avec le runtime renforcé (`app/Levra.entitlements` n'y au
 
 ### Avec GitHub Actions
 
-- **À chaque push sur `main` et chaque pull request** (`.github/workflows/build.yml`) : les vérifications ci-dessus, puis le build de l'app. `Levra-<commit>.zip` se télécharge en bas de la page de l'exécution, dans l'onglet Actions, pendant 30 jours. Signée ad hoc, cette app sert à tester : au premier lancement, macOS la bloque, et il faut passer par Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ».
+- **À chaque push sur `main` et chaque pull request** (`.github/workflows/build.yml`) : les vérifications ci-dessus, puis l'app et son image disque. Pour `main`, `Levra.dmg` remplace celle de la pré-version `edge`, dans Releases : la dernière version est toujours à la même adresse. Pour une pull request, elle se télécharge en bas de la page de l'exécution, dans l'onglet Actions, pendant 14 jours. Signée ad hoc, cette app sert à tester : au premier lancement, macOS la bloque, et il faut passer par Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ».
 - **À chaque tag `v<version>`** (`.github/workflows/release.yml`) : `scripts/release.sh` sur un Mac de GitHub, puis une release GitHub avec le `.dmg` notarisé, que tout le monde peut télécharger et ouvrir. Le tag doit reprendre la version de `app/Info.plist` :
 
   ```sh
