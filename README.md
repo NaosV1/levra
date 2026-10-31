@@ -138,7 +138,8 @@ Le script signe l'app avec le runtime renforcé (`app/Levra.entitlements` n'y au
 
 ### Avec GitHub Actions
 
-- **À chaque push sur `main` et chaque pull request** (`.github/workflows/build.yml`) : les vérifications ci-dessus, puis l'app et son image disque. Pour `main`, `Levra.dmg` remplace celle de la pré-version `edge`, dans Releases : la dernière version est toujours à la même adresse. Pour une pull request, elle se télécharge en bas de la page de l'exécution, dans l'onglet Actions, pendant 14 jours. Signée ad hoc, cette app sert à tester : au premier lancement, macOS la bloque, et il faut passer par Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ».
+- **À chaque push sur `main`** (`.github/workflows/build.yml`) : les vérifications ci-dessus, puis `scripts/release.sh` : l'app et son image disque, signées et notarisées comme une version. `Levra.dmg` remplace celle de la pré-version `edge`, dans Releases : la dernière version est toujours à la même adresse et s'ouvre sans avertissement.
+- **À chaque pull request** (même workflow) : les vérifications, puis une app signée ad hoc, sans accès aux secrets. Son image disque se télécharge en bas de la page de l'exécution, dans l'onglet Actions, pendant 14 jours. Au premier lancement, macOS la bloque : Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ».
 - **À chaque tag `v<version>`** (`.github/workflows/release.yml`) : `scripts/release.sh` sur un Mac de GitHub, puis une release GitHub avec le `.dmg` notarisé, que tout le monde peut télécharger et ouvrir. Le tag doit reprendre la version de `app/Info.plist` :
 
   ```sh
@@ -146,15 +147,23 @@ Le script signe l'app avec le runtime renforcé (`app/Levra.entitlements` n'y au
   git push origin v0.1.0
   ```
 
-La release a besoin de ces secrets, dans Settings › Secrets and variables › Actions du dépôt :
+Les builds de `main` et les tags ont besoin de ces secrets du dépôt (Settings › Secrets and variables › Actions), que `scripts/ci-keychain.sh` installe sur le Mac de GitHub :
 
 | Secret | Contenu |
 |---|---|
-| `DEVELOPER_ID_P12` | Le certificat « Developer ID Application » avec sa clé privée, exporté en `.p12` depuis Trousseaux d'accès, en base64 : `base64 -i levra.p12 \| pbcopy` |
-| `DEVELOPER_ID_P12_PASSWORD` | Le mot de passe choisi à l'export |
+| `DEVELOPER_ID_P12` | Le certificat « Developer ID Application » avec sa clé privée, en `.p12`, encodé en base64 |
+| `DEVELOPER_ID_P12_PASSWORD` | Le mot de passe du `.p12` |
 | `NOTARY_APPLE_ID` | L'adresse du compte Apple Developer |
 | `NOTARY_PASSWORD` | Un mot de passe d'app créé sur account.apple.com |
-| `NOTARY_TEAM_ID` | L'identifiant d'équipe, 10 caractères (developer.apple.com › Account › Membership) |
+| `NOTARY_TEAM_ID` | L'identifiant d'équipe, 10 caractères |
+
+Pour les renseigner, ou les remplacer quand le certificat expire : exporter le certificat et sa clé en `.p12` depuis Trousseaux d'accès, créer un mot de passe d'app sur account.apple.com, puis lancer :
+
+```sh
+scripts/ci-secrets.sh chemin/vers/developer-id.p12
+```
+
+Le script demande les mots de passe sans les afficher, lit l'équipe dans le certificat, fait vérifier les identifiants par Apple (et les enregistre sous le profil `levra` de ce Mac, pour `scripts/release.sh`), puis envoie les cinq secrets à GitHub.
 
 ## CLI
 

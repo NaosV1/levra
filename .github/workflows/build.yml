@@ -1,7 +1,8 @@
 # Checks the Rust core and builds the disk image on every push to main and
-# every pull request. Each build of main replaces the "edge" pre-release, so
-# that the latest app is always at the same address. The app is signed ad
-# hoc: these builds are for testing (see "Distribution" in README.md).
+# every pull request. Builds of main are signed with Developer ID and
+# notarized like a release, then replace the "edge" pre-release, so that the
+# latest app is always at the same address and opens without warning. Pull
+# requests get an app signed ad hoc, for testing, and never see the secrets.
 name: Build
 
 on:
@@ -13,7 +14,7 @@ on:
 jobs:
   build:
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -31,11 +32,27 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
-      - name: App
-        run: scripts/build-app.sh
+      - name: App de test
+        if: github.ref != 'refs/heads/main'
+        run: |
+          scripts/build-app.sh
+          scripts/make-dmg.sh build/Levra.app build/Levra.dmg
 
-      - name: Image disque
-        run: scripts/make-dmg.sh build/Levra.app build/Levra.dmg
+      - name: Trousseau de signature
+        if: github.ref == 'refs/heads/main'
+        env:
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: scripts/ci-keychain.sh
+
+      - name: App signée et notarisée
+        if: github.ref == 'refs/heads/main'
+        run: |
+          LEVRA_NOTARY_PROFILE=levra scripts/release.sh
+          mv build/Levra-*.dmg build/Levra.dmg
 
       - uses: actions/upload-artifact@v7
         with:
@@ -70,6 +87,4 @@ jobs:
           fi
           gh release create edge Levra.dmg --target "$GITHUB_SHA" --prerelease \
             --title "Levra – dernière version de main" \
-            --notes "Build automatique de ${GITHUB_SHA:0:7}, remplacé à chaque push sur main.
-
-          Pas encore signée par Apple : au premier lancement, macOS la bloque. Ouvre Réglages Système › Confidentialité et sécurité, puis « Ouvrir quand même »."
+            --notes "Build automatique de ${GITHUB_SHA:0:7}, signé et notarisé par Apple, remplacé à chaque push sur main."
