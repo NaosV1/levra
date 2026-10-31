@@ -8,6 +8,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate, @unchecked Sen
     enum Target: Sendable {
         case cleanup
         case memory
+        case explorer
         case uninstall(bundleId: String)
     }
 
@@ -53,14 +54,24 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate, @unchecked Sen
         post(content, id: "memory-critical")
     }
 
-    func cleaned(bytes: UInt64, failures: Int) {
+    func cleaned(bytes: UInt64, failures: Int, automatic: Bool = false) {
         let content = UNMutableNotificationContent()
         content.title = "\(Format.bytes(bytes)) libérés"
         content.body = failures == 0
-            ? "Nettoyage terminé : seuls les éléments sans risque ont été retirés."
+            ? automatic
+                ? "Nettoyage automatique : seuls les caches et fichiers qui se recréent ont été retirés."
+                : "Nettoyage terminé : seuls les éléments sans risque ont été retirés."
             : "\(Format.counted(failures, "élément")) \(Format.agree(failures, "n'a pas pu être retiré", "n'ont pas pu être retirés")). Cliquer pour voir le détail."
         content.userInfo = [Key.target: "cleanup"]
         post(content, id: "cleaned")
+    }
+
+    func folderGrew(path: String, grown: Int64) {
+        let content = UNMutableNotificationContent()
+        content.title = "\((path as NSString).lastPathComponent) a pris \(Format.bytes(UInt64(max(grown, 0))))"
+        content.body = "En un jour, dans \(path.abbreviatingHome). Cliquer pour voir ce qui prend la place."
+        content.userInfo = [Key.target: "explorer"]
+        post(content, id: "grew.\(path)")
     }
 
     private func post(_ content: UNMutableNotificationContent, id: String) {
@@ -80,6 +91,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate, @unchecked Sen
         let target: Target? = switch info[Key.target] as? String {
         case "cleanup": .cleanup
         case "memory": .memory
+        case "explorer": .explorer
         case "uninstall": (info[Key.bundleId] as? String).map { .uninstall(bundleId: $0) }
         default: nil
         }
