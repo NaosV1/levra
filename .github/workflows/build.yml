@@ -1,0 +1,46 @@
+# Checks the Rust core, then builds the app on every push to main and every
+# pull request. The app is signed ad hoc: the zip on the run's page is for
+# testing, not for sharing (see "Distribution" in README.md).
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Outils Rust
+        run: rustup component add clippy rustfmt
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
+
+      - name: App
+        run: scripts/build-app.sh
+
+      # ditto keeps the bundle's symlinks and permissions, which a plain
+      # artifact upload would lose.
+      - name: Archive
+        run: ditto -c -k --keepParent build/Levra.app "build/Levra-${GITHUB_SHA:0:7}.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: build/Levra-*.zip
+          archive: false
+          retention-days: 30

@@ -104,11 +104,11 @@ scripts/build-app.sh --open   # et la lance
 
 Pour travailler sur l'interface dans Xcode : lancer le script une fois (il génère `app/Frameworks` et les bindings), puis ouvrir `app/Package.swift`.
 
-Vérifications :
+Vérifications, les mêmes que la CI :
 
 ```sh
 cargo test --workspace
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
@@ -132,6 +132,26 @@ LEVRA_NOTARY_PROFILE=levra scripts/release.sh
 ```
 
 Le script signe l'app avec le runtime renforcé (`app/Levra.entitlements` n'y autorise que les Apple Events, pour le Finder), la fait notariser et y agrafe le ticket pour qu'elle s'ouvre aussi hors ligne, puis fait de même pour `build/Levra-<version>.dmg`. Si Apple refuse, il affiche le rapport de notarisation. `LEVRA_SIGN_IDENTITY` choisit le certificat quand il y en a plusieurs.
+
+### Avec GitHub Actions
+
+- **À chaque push sur `main` et chaque pull request** (`.github/workflows/build.yml`) : les vérifications ci-dessus, puis le build de l'app. `Levra-<commit>.zip` se télécharge en bas de la page de l'exécution, dans l'onglet Actions, pendant 30 jours. Signée ad hoc, cette app sert à tester : au premier lancement, macOS la bloque, et il faut passer par Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ».
+- **À chaque tag `v<version>`** (`.github/workflows/release.yml`) : `scripts/release.sh` sur un Mac de GitHub, puis une release GitHub avec le `.dmg` notarisé, que tout le monde peut télécharger et ouvrir. Le tag doit reprendre la version de `app/Info.plist` :
+
+  ```sh
+  git tag v0.1.0
+  git push origin v0.1.0
+  ```
+
+La release a besoin de ces secrets, dans Settings › Secrets and variables › Actions du dépôt :
+
+| Secret | Contenu |
+|---|---|
+| `DEVELOPER_ID_P12` | Le certificat « Developer ID Application » avec sa clé privée, exporté en `.p12` depuis Trousseaux d'accès, en base64 : `base64 -i levra.p12 \| pbcopy` |
+| `DEVELOPER_ID_P12_PASSWORD` | Le mot de passe choisi à l'export |
+| `NOTARY_APPLE_ID` | L'adresse du compte Apple Developer |
+| `NOTARY_PASSWORD` | Un mot de passe d'app créé sur account.apple.com |
+| `NOTARY_TEAM_ID` | L'identifiant d'équipe, 10 caractères (developer.apple.com › Account › Membership) |
 
 ## CLI
 
