@@ -16,6 +16,7 @@ struct HomeView: View {
                 if let disk = app.disk {
                     DiskHero(disk: disk)
                 }
+                HistoryCard(history: app.history)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 14)], spacing: 14) {
                     cleanupCard
                     appsCard
