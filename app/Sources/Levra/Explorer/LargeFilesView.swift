@@ -13,11 +13,39 @@ struct LargeFilesView: View {
     @State private var selection: Set<UInt64> = []
     @State private var confirming = false
     @State private var outcome: CleanupOutcome?
+    @State private var kind: Kind = .all
 
     private struct Filter: Equatable {
         let minimum: UInt64
         let untouchedDays: UInt32
+        let kind: Kind
         let phase: ExplorerModel.Phase
+    }
+
+    /// What the files hold, from their extension.
+    enum Kind: Hashable {
+        case all, video, image, audio, archive
+
+        var title: String {
+            switch self {
+            case .all: "Tout"
+            case .video: "Vidéos"
+            case .image: "Images"
+            case .audio: "Audio"
+            case .archive: "Archives"
+            }
+        }
+
+        func matches(_ name: String) -> Bool {
+            let ext = (name as NSString).pathExtension.lowercased()
+            switch self {
+            case .all: return true
+            case .video: return FileKinds.video.contains(ext)
+            case .image: return FileKinds.image.contains(ext)
+            case .audio: return FileKinds.audio.contains(ext)
+            case .archive: return FileKinds.archive.contains(ext)
+            }
+        }
     }
 
     var body: some View {
@@ -70,11 +98,9 @@ struct LargeFilesView: View {
         }
         .animation(Motion.snappy, value: selection.isEmpty)
         .animation(Motion.snappy, value: explorer.phase)
-        .task(id: Filter(minimum: minimum, untouchedDays: untouchedDays, phase: explorer.phase)) { reload() }
+        .task(id: Filter(minimum: minimum, untouchedDays: untouchedDays, kind: kind, phase: explorer.phase)) { reload() }
         // Shares the explorer's measurement, started here if not yet done.
-        .task {
-            if explorer.phase == .idle, explorer.error == nil { await explorer.scan() }
-        }
+        .task { await explorer.openDefault() }
         .confirmationDialog(
             "Mettre \(Format.counted(selection.count, "fichier")) à la corbeille ?",
             isPresented: $confirming,
@@ -108,6 +134,10 @@ struct LargeFilesView: View {
 
     private var list: some View {
         VStack(alignment: .leading, spacing: 16) {
+            SegmentedControl(
+                options: [Kind.all, .video, .image, .audio, .archive].map { ($0, $0.title) },
+                selection: $kind
+            )
             if let outcome {
                 OutcomeBanner(outcome: outcome) { withAnimation(Motion.snappy) { self.outcome = nil } }
                     .transition(.lift(reduceMotion: reduceMotion))
@@ -139,7 +169,12 @@ struct LargeFilesView: View {
     }
 
     private func reload() {
-        files = explorer.largestFiles(minBytes: minimum, untouchedDays: untouchedDays)
+        // avec un filtre de type on demande plus large puis on garde les 200 premiers qui collent
+        files = Array(
+            explorer.largestFiles(minBytes: minimum, untouchedDays: untouchedDays, limit: kind == .all ? 200 : 5_000)
+                .filter { kind.matches($0.name) }
+                .prefix(200)
+        )
         selection.formIntersection(files.map(\.id))
     }
 }
