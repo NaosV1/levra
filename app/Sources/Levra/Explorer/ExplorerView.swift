@@ -9,16 +9,31 @@ struct ExplorerView: View {
     @State private var toTrash: NodeInfo?
     @State private var outcome: CleanupOutcome?
     @State private var showsSystem = false
+    @AppStorage("explorerMode") private var mode: Mode = .list
+    @State private var zoomAnchor: UnitPoint = .center
+
+    enum Mode: String {
+        case list, map
+    }
 
     var body: some View {
         PageScroll {
             PageHeader(title: "Explorateur", subtitle: subtitle) {
                 Button { chooseFolder() } label: { ButtonLabel("Choisir un dossier", icon: .folderOpen) }
                     .buttonStyle(.app(.secondary))
-                Button { Task { await model.scan() } } label: { ButtonLabel("Rafraîchir", icon: .refresh) }
+                if model.updating {
+                    // la mesure enregistrée s'affiche direct et se met à jour en douce
+                    HStack(spacing: 6) {
+                        Spinner(size: 13)
+                        Text(model.measuredAt.map { "Mesure d'\($0.formatted(.relative(presentation: .named))), mise à jour…" } ?? "Mise à jour…")
+                            .textStyle(.caption)
+                    }
+                    .transition(.opacity)
+                }
+                Button { Task { await model.scan(keepingCurrent: true) } } label: { ButtonLabel("Rafraîchir", icon: .refresh) }
                     .buttonStyle(.app(.secondary))
                     .keyboardShortcut("r", modifiers: .command)
-                    .disabled(model.phase != .ready)
+                    .disabled(model.phase != .ready || model.updating)
             }
         } content: {
             switch model.phase {
@@ -34,9 +49,7 @@ struct ExplorerView: View {
         }
         .animation(Motion.snappy, value: model.phase)
         // The home folder is measured as soon as the page opens.
-        .task {
-            if model.phase == .idle, model.error == nil { await model.scan() }
-        }
+        .task { await model.openDefault() }
         .confirmationDialog(
             "Mettre « \(toTrash?.name ?? "") » à la corbeille ?",
             isPresented: Binding(get: { toTrash != nil }, set: { if !$0 { toTrash = nil } }),
@@ -82,7 +95,11 @@ struct ExplorerView: View {
 
     private var browser: some View {
         VStack(alignment: .leading, spacing: 16) {
-            breadcrumb
+            HStack {
+                breadcrumb
+                Spacer(minLength: 12)
+                SegmentedControl(options: [(Mode.list, "Liste"), (.map, "Carte")], selection: $mode)
+            }
             if let outcome {
                 OutcomeBanner(outcome: outcome) { withAnimation(Motion.snappy) { self.outcome = nil } }
                     .transition(.lift(reduceMotion: reduceMotion))
@@ -93,6 +110,29 @@ struct ExplorerView: View {
             let all = model.children
             let children = all.filter { !model.isSystemFolder($0) }
             let system = all.filter(model.isSystemFolder)
+            if mode == .map {
+                TreemapView(
+                    nodes: children,
+                    onOpen: { node, anchor in
+                        zoomAnchor = anchor
+                        withAnimation(reduceMotion ? Motion.snappy : Motion.glide) { model.open(node) }
+                    },
+                    onTrash: { toTrash = $0 }
+                )
+                .id(model.current?.id)
+                .transition(
+                    reduceMotion
+                        ? .opacity
+                        : .asymmetric(
+                            insertion: .scale(scale: 0.4, anchor: zoomAnchor).combined(with: .opacity),
+                            removal: .opacity.animation(Motion.quick)
+                        )
+                )
+                if !system.isEmpty {
+                    Text("Les dossiers de macOS (\(Format.bytes(system.reduce(0) { $0 + $1.bytes }))) sont laissés hors de la carte.")
+                        .textStyle(.caption)
+                }
+            } else {
             VStack(spacing: 0) {
                 ForEach(Array(children.enumerated()), id: \.element.id) { index, node in
                     row(node, isLast: index == children.count - 1 && system.isEmpty)
@@ -116,7 +156,9 @@ struct ExplorerView: View {
             }
             .card()
             .id(model.current?.id)
+            }
         }
+        .animation(Motion.snappy, value: mode)
     }
 
     private func row(_ node: NodeInfo, isLast: Bool) -> some View {
