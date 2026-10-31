@@ -90,8 +90,9 @@ struct ExplorerView: View {
             if !model.denied.isEmpty {
                 FullDiskAccessBanner(deniedCount: model.denied.count)
             }
-            let children = model.children.filter { !model.isSystemFolder($0) }
-            let system = model.children.filter(model.isSystemFolder)
+            let all = model.children
+            let children = all.filter { !model.isSystemFolder($0) }
+            let system = all.filter(model.isSystemFolder)
             VStack(spacing: 0) {
                 ForEach(Array(children.enumerated()), id: \.element.id) { index, node in
                     row(node, isLast: index == children.count - 1 && system.isEmpty)
