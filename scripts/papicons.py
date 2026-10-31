@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generates app/Sources/Debarras/Design/Papicons.swift from PapIcons.
+"""Generates app/Sources/Levra/Design/Papicons.swift from PapIcons.
 
 PapIcons (MIT, (c) 2025 PapTools, https://pub.dev/packages/papicons) ships
 its icons as Dart data. Only the icons listed in ICONS are converted, into
@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 VERSION = "1.0.0"
-OUTPUT = Path(__file__).resolve().parent.parent / "app/Sources/Debarras/Design/Papicons.swift"
+OUTPUT = Path(__file__).resolve().parent.parent / "app/Sources/Levra/Design/Papicons.swift"
 
 # Swift case name -> PapIcons name (without the `strokeRounded` prefix).
 ICONS = {
@@ -49,6 +49,7 @@ ICONS = {
     "gitBranch": "GitBranch",
     "grid": "GridView",
     "hardDrive": "HardDrive",
+    "home": "Home01",
     "info": "InformationCircle",
     "layers": "Layers01",
     "loading": "Loading03",

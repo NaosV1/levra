@@ -5,15 +5,17 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>fr</string>
 	<key>CFBundleDisplayName</key>
-	<string>Débarras</string>
+	<string>Levra</string>
 	<key>CFBundleExecutable</key>
-	<string>Debarras</string>
+	<string>Levra</string>
+	<key>CFBundleIconFile</key>
+	<string>Levra</string>
 	<key>CFBundleIdentifier</key>
-	<string>local.debarras.app</string>
+	<string>com.levra.app</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Débarras</string>
+	<string>Levra</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -25,6 +27,6 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Débarras demande au Finder de mettre à la corbeille ce qui est verrouillé (apps, fichiers du système). Le Finder te demande alors ton mot de passe.</string>
+	<string>Levra demande au Finder de mettre à la corbeille ce qui est verrouillé (apps, fichiers du système). Le Finder te demande alors ton mot de passe.</string>
 </dict>
 </plist>

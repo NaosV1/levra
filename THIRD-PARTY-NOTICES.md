@@ -2,7 +2,7 @@
 
 ## PapIcons 1.0.0
 
-The icons in `app/Sources/Debarras/Design/Papicons.swift` are generated from
+The icons in `app/Sources/Levra/Design/Papicons.swift` are generated from
 PapIcons (https://pub.dev/packages/papicons) by `scripts/papicons.py`.
 
 ```

@@ -1,0 +1,15 @@
+[package]
+name = "levra-cli"
+description = "Command-line interface for the Levra core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "levra"
+path = "src/main.rs"
+
+[dependencies]
+levra-core.workspace = true
+serde_json.workspace = true

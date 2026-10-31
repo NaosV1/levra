@@ -4,5 +4,5 @@
 /app/.swiftpm
 # Produced by scripts/build-app.sh from the Rust crate.
 /app/Frameworks
-/app/Sources/DebarrasBindings/debarras_ffi.swift
+/app/Sources/LevraBindings/levra_ffi.swift
 .DS_Store

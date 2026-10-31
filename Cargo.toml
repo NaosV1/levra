@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/debarras-core", "crates/debarras-cli", "crates/debarras-ffi"]
+members = ["crates/levra-core", "crates/levra-cli", "crates/levra-ffi"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,7 +9,7 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 blake3 = "1.8"
-debarras-core = { path = "crates/debarras-core" }
+levra-core = { path = "crates/levra-core" }
 libc = "0.2"
 plist = "1.10"
 rayon = "1.12"
