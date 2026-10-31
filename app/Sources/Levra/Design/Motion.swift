@@ -70,3 +70,55 @@ extension View {
         modifier(StaggeredAppear(index: index))
     }
 }
+
+/// A soft highlight sweeping across a row being worked on. With Reduce
+/// Motion it becomes a still tint.
+private struct Shimmer: ViewModifier {
+    let active: Bool
+    @State private var phase: CGFloat = -1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if active {
+                GeometryReader { proxy in
+                    if reduceMotion {
+                        Theme.accent.opacity(0.06)
+                    } else {
+                        // une bande de lumière qui traverse la ligne en boucle, discret mais on voit que ça bosse
+                        LinearGradient(
+                            colors: [.clear, Theme.accent.opacity(0.12), .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: proxy.size.width * 0.45)
+                        .offset(x: phase * proxy.size.width)
+                        .onAppear {
+                            phase = -0.45
+                            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: false)) { phase = 1 }
+                        }
+                    }
+                }
+                .allowsHitTesting(false)
+                .clipped()
+                .transition(.opacity)
+            }
+        }
+    }
+}
+
+extension View {
+    func shimmering(_ active: Bool) -> some View {
+        modifier(Shimmer(active: active))
+    }
+}
+
+extension AnyTransition {
+    /// A row done with: slides a few points aside as it fades.
+    static func dismissRow(reduceMotion: Bool) -> AnyTransition {
+        .asymmetric(
+            insertion: .identity,
+            removal: reduceMotion ? .opacity : .opacity.combined(with: .offset(x: 24))
+        )
+    }
+}
