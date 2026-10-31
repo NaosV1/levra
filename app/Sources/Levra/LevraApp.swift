@@ -68,6 +68,7 @@ private struct MenuBarLabel: View {
                     openWindow(id: "main")
                     NSApplication.shared.activate()
                 }
+                StatusItemDrop.install { url in model.uninstallDropped(url) }
             }
     }
 }
@@ -76,6 +77,24 @@ private struct MenuBarLabel: View {
 /// are closed, it lives on in the menu bar, uninstall detection included.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Apps dropped on the Dock icon, handed over once the model listens.
+    static var onOpenApp: ((URL) -> Void)? {
+        didSet {
+            guard let onOpenApp else { return }
+            pending.forEach(onOpenApp)
+            pending = []
+        }
+    }
+
+    private static var pending: [URL] = []
+
+    // une app glissée sur l'icône du dock arrive ici, même au lancement avant que le modèle soit prêt
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.pathExtension == "app" {
+            if let handler = Self.onOpenApp { handler(url) } else { Self.pending.append(url) }
+        }
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
