@@ -30,6 +30,8 @@ struct RootView: View {
         case .explorer: ExplorerView(model: model.explorer)
         case .largeFiles: LargeFilesView(explorer: model.explorer)
         case .duplicates: DuplicatesView(model: model.duplicates)
+        case .photos: PhotosView(model: model.photos)
+        case .archive: ArchiveView(model: model.archive)
         case .memory: MemoryView(model: model.memory)
         case .apps: AppsView(model: model.apps)
         case .debloat: DebloatView(model: model.debloat, apps: model.apps)
@@ -38,20 +40,24 @@ struct RootView: View {
 }
 
 extension AppModel.Section {
-    /// ⌘1…⌘8, in sidebar order.
-    var shortcut: KeyEquivalent {
-        KeyEquivalent(Character(String((Self.allCases.firstIndex(of: self) ?? 0) + 1)))
+    /// ⌘1…⌘9 for the first nine pages, in sidebar order.
+    var shortcut: KeyEquivalent? {
+        // au delà de 9 y a plus de chiffre dispo, Character("10") ça crashe direct
+        let index = (Self.allCases.firstIndex(of: self) ?? 0) + 1
+        return index <= 9 ? KeyEquivalent(Character(String(index))) : nil
     }
 }
 
-/// ⌘1…⌘8 switch pages instantly: keyboard actions are never animated.
+/// ⌘1…⌘9 switch pages instantly: keyboard actions are never animated.
 private struct KeyboardNavigation: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        ForEach(AppModel.Section.allCases) { section in
-            Button(section.title) { model.section = section }
-                .keyboardShortcut(section.shortcut, modifiers: .command)
+        ForEach(AppModel.Section.allCases.filter { $0.shortcut != nil }) { section in
+            if let shortcut = section.shortcut {
+                Button(section.title) { model.section = section }
+                    .keyboardShortcut(shortcut, modifiers: .command)
+            }
         }
         .opacity(0)
         .allowsHitTesting(false)
@@ -77,7 +83,7 @@ private struct Sidebar: View {
                 withAnimation(Motion.glide) { model.section = .home }
             }
             .padding(.bottom, 18)
-            group("Espace disque", [.cleanup, .explorer, .largeFiles, .duplicates])
+            group("Espace disque", [.cleanup, .explorer, .largeFiles, .duplicates, .photos, .archive])
             group("Système", [.memory, .apps, .debloat])
 
             Spacer()
@@ -152,9 +158,11 @@ private struct SidebarItem: View {
                 Icon(section.icon, size: 16)
                 Text(section.title).font(.system(size: 13, weight: selected ? .medium : .regular))
                 Spacer()
-                Text("⌘\(String(section.shortcut.character))")
-                    .textStyle(.caption)
-                    .opacity(hovering ? 1 : 0)
+                if let shortcut = section.shortcut {
+                    Text("⌘\(String(shortcut.character))")
+                        .textStyle(.caption)
+                        .opacity(hovering ? 1 : 0)
+                }
             }
             .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
             .padding(.horizontal, 10)
