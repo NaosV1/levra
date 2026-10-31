@@ -85,8 +85,13 @@ impl Tree {
                     && before.is_none_or(|limit| node.modified.is_some_and(|m| m < limit))
             })
             .collect();
-        files.sort_unstable_by(|&a, &b| self.nodes[b].bytes.cmp(&self.nodes[a].bytes));
-        files.truncate(limit);
+        let largest_first = |&a: &NodeId, &b: &NodeId| self.nodes[b].bytes.cmp(&self.nodes[a].bytes);
+        // on isole les `limit` plus gros avant de trier, au lieu de trier des centaines de milliers de fichiers
+        if limit < files.len() {
+            files.select_nth_unstable_by(limit, largest_first);
+            files.truncate(limit);
+        }
+        files.sort_unstable_by(largest_first);
         files
     }
 
