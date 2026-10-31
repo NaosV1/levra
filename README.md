@@ -128,7 +128,9 @@ Une fois sur le Mac qui publie :
    xcrun notarytool store-credentials levra --apple-id <adresse> --team-id <équipe>
    ```
 
-Puis, pour chaque version, après avoir augmenté `CFBundleShortVersionString` dans `app/Info.plist` (le numéro de build, `CFBundleVersion`, est le nombre de commits : `scripts/build-app.sh` l'écrit dans le bundle) :
+La version se compose de la majeure et de la mineure de `CFBundleShortVersionString` dans `app/Info.plist`, puis du numéro de build, le nombre de commits : `scripts/build-app.sh` écrit les deux dans le bundle (0.1.8, 0.1.9…). Pour passer à 0.2 ou à 1.0, il suffit de changer `CFBundleShortVersionString`.
+
+GitHub publie une version à chaque push (voir plus bas) ; pour en construire une sur ce Mac :
 
 ```sh
 LEVRA_NOTARY_PROFILE=levra scripts/release.sh
@@ -138,16 +140,10 @@ Le script signe l'app avec le runtime renforcé (`app/Levra.entitlements` n'y au
 
 ### Avec GitHub Actions
 
-- **À chaque push sur `main`** (`.github/workflows/build.yml`) : les vérifications ci-dessus, puis `scripts/release.sh` : l'app et son image disque, signées et notarisées comme une version. `Levra.dmg` remplace celle de la pré-version `edge`, dans Releases : la dernière version est toujours à la même adresse et s'ouvre sans avertissement.
+- **À chaque push sur `main`** (`.github/workflows/build.yml`) : les vérifications ci-dessus, puis `scripts/release.sh` et `scripts/appcast.sh`, et une nouvelle release GitHub, `v0.1.<build>`, avec l'image disque notarisée et l'appcast. Les copies installées se mettent à jour dans la journée. Un push qui arrive pendant un build l'annule : seule la dernière version est publiée.
 - **À chaque pull request** (même workflow) : les vérifications, puis une app signée ad hoc, sans accès aux secrets. Son image disque se télécharge en bas de la page de l'exécution, dans l'onglet Actions, pendant 14 jours. Au premier lancement, macOS la bloque : Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ».
-- **À chaque tag `v<version>`** (`.github/workflows/release.yml`) : `scripts/release.sh` sur un Mac de GitHub, puis une release GitHub avec le `.dmg` notarisé, que tout le monde peut télécharger et ouvrir. Le tag doit reprendre la version de `app/Info.plist` :
 
-  ```sh
-  git tag v0.1.0
-  git push origin v0.1.0
-  ```
-
-Les builds de `main` et les tags ont besoin de ces secrets du dépôt (Settings › Secrets and variables › Actions), que `scripts/ci-keychain.sh` installe sur le Mac de GitHub :
+Les builds de `main` ont besoin de ces secrets du dépôt (Settings › Secrets and variables › Actions), que `scripts/ci-keychain.sh` installe sur le Mac de GitHub :
 
 | Secret | Contenu |
 |---|---|
@@ -165,9 +161,9 @@ scripts/ci-secrets.sh chemin/vers/developer-id.p12
 
 ### Mises à jour
 
-Levra se met à jour avec [Sparkle](https://sparkle-project.org). Une fois par jour (désactivable dans Réglages), l'app lit `appcast.xml` dans la dernière release GitHub (`SUFeedURL` dans `app/Info.plist`). Elle n'installe une version plus récente que si son image disque est signée avec la clé de Levra (`SUPublicEDKey`), en plus d'être notarisée par Apple. Sparkle compare les numéros de build ; les pré-versions `edge` ne sont pas proposées.
+Levra se met à jour avec [Sparkle](https://sparkle-project.org). Une fois par jour (désactivable dans Réglages), l'app lit `appcast.xml` dans la dernière release GitHub (`SUFeedURL` dans `app/Info.plist`). Elle n'installe une version plus récente que si son image disque est signée avec la clé de Levra (`SUPublicEDKey`), en plus d'être notarisée par Apple. Sparkle compare les numéros de build.
 
-Le workflow de release écrit l'appcast avec `scripts/appcast.sh`, qui signe l'image disque avec la clé privée du secret `SPARKLE_PRIVATE_KEY`. Cette clé a été créée une fois par l'outil de Sparkle, qui la garde aussi dans le trousseau du Mac qui l'a créée, sous le compte `levra` :
+Chaque build de `main` écrit l'appcast avec `scripts/appcast.sh`, qui signe l'image disque avec la clé privée du secret `SPARKLE_PRIVATE_KEY`. Cette clé a été créée une fois par l'outil de Sparkle, qui la garde aussi dans le trousseau du Mac qui l'a créée, sous le compte `levra` :
 
 ```sh
 app/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account levra -p   # affiche la clé publique

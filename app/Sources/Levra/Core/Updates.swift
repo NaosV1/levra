@@ -17,7 +17,7 @@ final class Updates {
         didSet { controller.updater.automaticallyChecksForUpdates = checksAutomatically }
     }
 
-    /// "0.2.0 (148)": the version, then the build number Sparkle compares.
+    /// "0.1.148": major.minor, then the build number that Sparkle compares.
     let version: String
 
     @ObservationIgnored private let controller: SPUStandardUpdaterController
@@ -26,8 +26,7 @@ final class Updates {
     init() {
         controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
         checksAutomatically = controller.updater.automaticallyChecksForUpdates
-        let info = Bundle.main.infoDictionary ?? [:]
-        version = "\(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))"
+        version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         subscription = controller.updater.publisher(for: \.canCheckForUpdates)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] canCheck in

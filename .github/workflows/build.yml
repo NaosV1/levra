@@ -1,8 +1,9 @@
 # Checks the Rust core and builds the disk image on every push to main and
-# every pull request. Builds of main are signed with Developer ID and
-# notarized like a release, then replace the "edge" pre-release, so that the
-# latest app is always at the same address and opens without warning. Pull
-# requests get an app signed ad hoc, for testing, and never see the secrets.
+# every pull request. Every push to main is published as a new version:
+# signed with Developer ID, notarized, with the appcast through which
+# installed copies update to it, within a day. Its number is major.minor
+# from app/Info.plist, then the build number. Pull requests get an app
+# signed ad hoc, for testing, and never see the secrets.
 name: Build
 
 on:
@@ -11,12 +12,20 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer push supersedes a build still running: only the latest is
+# published, and versions go out in order.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -41,6 +50,13 @@ jobs:
           scripts/build-app.sh
           scripts/make-dmg.sh build/Levra.app build/Levra.dmg
 
+      - uses: actions/upload-artifact@v7
+        if: github.ref != 'refs/heads/main'
+        with:
+          path: build/Levra.dmg
+          archive: false
+          retention-days: 14
+
       - name: Trousseau de signature
         if: github.ref == 'refs/heads/main'
         env:
@@ -53,15 +69,35 @@ jobs:
 
       - name: App signée et notarisée
         if: github.ref == 'refs/heads/main'
+        run: LEVRA_NOTARY_PROFILE=levra scripts/release.sh
+
+      - name: Version
+        id: version
+        if: github.ref == 'refs/heads/main'
         run: |
-          LEVRA_NOTARY_PROFILE=levra scripts/release.sh
-          mv build/Levra-*.dmg build/Levra.dmg
+          version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" build/Levra.app/Contents/Info.plist)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Appcast
+        if: github.ref == 'refs/heads/main'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "::error::Secret SPARKLE_PRIVATE_KEY manquant : voir « Mises à jour » dans README.md."
+            exit 1
+          fi
+          scripts/appcast.sh build/Levra.app "build/Levra-$VERSION.dmg" > build/appcast.xml
 
       - uses: actions/upload-artifact@v7
+        if: github.ref == 'refs/heads/main'
         with:
-          path: build/Levra.dmg
-          archive: false
-          retention-days: 14
+          name: release
+          path: |
+            build/Levra-*.dmg
+            build/appcast.xml
+          retention-days: 1
 
   # Apart from the build, so that the code of a pull request never runs with
   # a token allowed to write to the repository.
@@ -72,22 +108,16 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-    concurrency:
-      group: edge-release
-      cancel-in-progress: true
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: Levra.dmg
+          name: release
 
-      - name: Pré-version « edge »
+      - name: Publication
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
-          if gh release view edge >/dev/null 2>&1; then
-            gh release delete edge --cleanup-tag --yes
-          fi
-          gh release create edge Levra.dmg --target "$GITHUB_SHA" --prerelease \
-            --title "Levra – dernière version de main" \
-            --notes "Build automatique de ${GITHUB_SHA:0:7}, signé et notarisé par Apple, remplacé à chaque push sur main."
+          gh release create "v$VERSION" "Levra-$VERSION.dmg" appcast.xml \
+            --target "$GITHUB_SHA" --title "Levra $VERSION" --generate-notes
