@@ -18,6 +18,8 @@ use std::time::SystemTime;
 
 use rayon::prelude::*;
 
+use crate::listing::{EntryKind, list_dir};
+
 /// Cooperative cancellation shared between a caller and a running scan.
 #[derive(Clone, Debug, Default)]
 pub struct CancelToken(Arc<AtomicBool>);
@@ -127,7 +129,7 @@ impl ScanState {
         if self.cancel.is_cancelled() {
             return None;
         }
-        let entries = match fs::read_dir(dir) {
+        let entries = match list_dir(dir) {
             Ok(entries) => entries,
             Err(err) => {
                 if err.kind() == io::ErrorKind::PermissionDenied {
@@ -138,33 +140,32 @@ impl ScanState {
         };
 
         let mut level = Level::default();
-        for entry in entries.flatten() {
-            // `DirEntry::metadata` is an lstat: symlinks are never followed.
-            let Ok(meta) = entry.metadata() else {
-                continue;
-            };
-            if meta.is_dir() {
-                let path = entry.path();
-                if bounds.includes(&path, &meta) {
-                    level.subdirs.push(SubDir {
-                        path,
-                        name: entry.file_name(),
-                        own_bytes: allocated(&meta),
-                        modified: meta.modified().ok(),
+        for entry in entries {
+            match entry.kind {
+                EntryKind::Dir => {
+                    let path = dir.join(&entry.name);
+                    if bounds.includes(&path, entry.dev) && !entry.is_dataless() {
+                        level.subdirs.push(SubDir {
+                            path,
+                            name: entry.name,
+                            own_bytes: entry.allocated,
+                            modified: entry.modified,
+                        });
+                    }
+                }
+                EntryKind::File | EntryKind::Other => {
+                    let bytes = if entry.nlink > 1 && !links.first_sighting(entry.dev, entry.ino) {
+                        0
+                    } else {
+                        entry.allocated
+                    };
+                    level.files.push(FileEntry {
+                        name: entry.name,
+                        bytes,
+                        modified: entry.modified,
                     });
                 }
-                continue;
             }
-            let bytes = if meta.nlink() > 1 && !links.first_sighting(meta.dev(), meta.ino()) {
-                0
-            } else {
-                allocated(&meta)
-            };
-            level.files.push(FileEntry {
-                name: entry.file_name(),
-                bytes,
-                modified: meta.modified().ok(),
-            });
         }
 
         let bytes: u64 = level.files.iter().map(|f| f.bytes).sum();
@@ -210,8 +211,8 @@ impl Bounds {
 
     /// A different device means a mount point (disk image, simulator
     /// runtime, network share): not this volume's space.
-    fn includes(&self, dir: &Path, meta: &Metadata) -> bool {
-        meta.dev() == self.dev && !self.aliases.iter().any(|alias| alias == dir)
+    fn includes(&self, dir: &Path, dev: u64) -> bool {
+        dev == self.dev && !self.aliases.iter().any(|alias| alias == dir)
     }
 }
 
