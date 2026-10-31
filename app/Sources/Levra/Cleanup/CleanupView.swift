@@ -38,8 +38,13 @@ struct CleanupView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            if case .ready = model.phase, !model.findings.isEmpty {
+            switch model.phase {
+            case .ready where !model.findings.isEmpty:
                 footer.transition(.move(edge: .bottom).combined(with: .opacity))
+            case .cleaning:
+                cleaningBar.transition(.move(edge: .bottom).combined(with: .opacity))
+            default:
+                EmptyView()
             }
         }
         .animation(Motion.snappy, value: model.phase)
@@ -70,7 +75,8 @@ struct CleanupView: View {
         switch model.phase {
         case .idle: "Ce qui prend de la place pour rien, et ce qu'il devient si tu le retires."
         case .scanning: "Lecture du disque, rien n'est modifié."
-        case .ready, .cleaning: "Du plus sûr au plus délicat. Rien ne part sans ta confirmation."
+        case .ready: "Du plus sûr au plus délicat. Rien ne part sans ta confirmation."
+        case .cleaning: "Nettoyage en cours, un élément après l'autre."
         }
     }
 
@@ -113,9 +119,11 @@ struct CleanupView: View {
                             FindingRow(
                                 finding: finding,
                                 isSelected: binding(for: finding),
-                                isLast: index == section.findings.count - 1
+                                isLast: index == section.findings.count - 1,
+                                activity: activity(of: finding)
                             )
                             .staggeredAppear(index: offset + index)
+                            .transition(.dismissRow(reduceMotion: reduceMotion))
                         }
                     }
                     .card()
@@ -179,6 +187,48 @@ struct CleanupView: View {
             .disabled(model.selection.isEmpty || isBusy)
         }
         .animation(Motion.snappy, value: model.selectedBytes)
+    }
+
+    /// Where the cleanup stands, pinned where the selection bar was.
+    private var cleaningBar: some View {
+        ActionBar {
+            Spinner()
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text("Nettoyage en cours").textStyle(.bodyStrong)
+                    Text("\(min(model.cleaningDone + 1, model.cleaningTotal)) sur \(model.cleaningTotal)")
+                        .textStyle(.secondary)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                }
+                SizeBar(fraction: cleaningFraction, width: 220, tint: Theme.accent)
+            }
+            Spacer()
+            Text("\(Format.bytes(model.freedSoFar)) libérés")
+                .textStyle(.bodyStrong)
+                .monospacedDigit()
+                .contentTransition(.numericText())
+            Button("Arrêter") { withAnimation(Motion.snappy) { model.stopCleaning() } }
+                .buttonStyle(.app(.secondary))
+                .disabled(model.cleaningQueue.isEmpty)
+        }
+        .animation(Motion.snappy, value: model.cleaningDone)
+        .animation(Motion.snappy, value: model.freedSoFar)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Nettoyage en cours, \(model.cleaningDone) sur \(model.cleaningTotal)")
+    }
+
+    private var cleaningFraction: Double {
+        guard model.cleaningTotal > 0 else { return 0 }
+        // un petit bout d'avance pr l'élément en cours sinon la barre reste à 0 sur le 1er
+        let current = model.cleaningCurrent == nil ? 0 : 0.35
+        return (Double(model.cleaningDone) + current) / Double(model.cleaningTotal)
+    }
+
+    private func activity(of finding: FindingInfo) -> FindingRow.Activity {
+        if model.cleaningCurrent == finding.id { return .working }
+        if model.cleaningQueue.contains(finding.id) { return .queued }
+        return model.phase == .cleaning ? .locked : .none
     }
 
     private func binding(for finding: FindingInfo) -> Binding<Bool> {
@@ -257,9 +307,20 @@ private struct DecisionHeader: View {
 /// A finding in a sentence; how it is removed, where it lives and when it
 /// was last used open on demand.
 private struct FindingRow: View {
+    /// Its part in a cleanup under way.
+    enum Activity {
+        case none
+        /// Selected, waiting for its turn.
+        case queued
+        case working
+        /// Not part of it; left as is but cannot change meanwhile.
+        case locked
+    }
+
     let finding: FindingInfo
     @Binding var isSelected: Bool
     let isLast: Bool
+    var activity: Activity = .none
     @State private var expanded = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -267,9 +328,18 @@ private struct FindingRow: View {
         CardRow(isLast: isLast) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 12) {
-                    Checkbox(isOn: $isSelected)
-                        .disabled(finding.action == .manual)
-                        .padding(.top, 1)
+                    ZStack {
+                        if activity == .working {
+                            Spinner()
+                                .transition(.scale(scale: 0.6).combined(with: .opacity))
+                        } else {
+                            Checkbox(isOn: $isSelected)
+                                .disabled(finding.action == .manual || activity != .none)
+                                .transition(.scale(scale: 0.6).combined(with: .opacity))
+                        }
+                    }
+                    .frame(width: 16, height: 16)
+                    .padding(.top, 1)
                     Icon(finding.category.icon, size: 16)
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.top, 1)
@@ -305,12 +375,17 @@ private struct FindingRow: View {
                 }
             }
         }
+        .shimmering(activity == .working)
+        // ceux qui attendent leur tour sont estompés, celui en cours ressort
+        .opacity(activity == .queued ? 0.55 : 1)
+        .animation(Motion.snappy, value: activity)
         .contextMenu {
             if let path = finding.paths.first {
                 Button("Afficher dans le Finder") { SystemTrash.reveal(path) }
             }
         }
         .accessibilityElement(children: .contain)
+        .accessibilityValue(activity == .working ? "Suppression en cours" : activity == .queued ? "En attente" : "")
         .accessibilityAction(named: expanded ? "Masquer les détails" : "Afficher les détails") {
             expanded.toggle()
         }
