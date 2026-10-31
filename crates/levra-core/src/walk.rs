@@ -174,6 +174,15 @@ impl ScanState {
     }
 }
 
+/// Bytes allocated under each path, measured side by side.
+pub fn measure_all(paths: &[PathBuf]) -> Vec<u64> {
+    // un état par dossier, comme ça chq taille est juste même si deux dossiers partagent des liens physiques
+    paths
+        .par_iter()
+        .map(|path| ScanState::default().allocated_size(path))
+        .collect()
+}
+
 pub(crate) fn allocated(meta: &Metadata) -> u64 {
     meta.blocks() * 512
 }
@@ -279,6 +288,16 @@ mod tests {
         let mut file = File::create(path).unwrap();
         file.write_all(&vec![7u8; bytes]).unwrap();
         file.sync_all().unwrap();
+    }
+
+    #[test]
+    fn measures_several_folders_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("a")).unwrap();
+        write_file(&dir.path().join("a/big"), 300_000);
+        let sizes = measure_all(&[dir.path().join("a"), dir.path().join("missing")]);
+        assert!(sizes[0] >= 300_000);
+        assert_eq!(sizes[1], 0);
     }
 
     #[test]
