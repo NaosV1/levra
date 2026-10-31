@@ -1,0 +1,79 @@
+import Foundation
+import UserNotifications
+
+/// Local notifications: low disk space, critical memory pressure, and apps
+/// removed outside Débarras whose leftovers are still on disk.
+final class Notifier: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
+    /// What clicking a notification opens.
+    enum Target: Sendable {
+        case cleanup
+        case memory
+        case uninstall(bundleId: String)
+    }
+
+    private enum Key {
+        static let target = "target"
+        static let bundleId = "bundleId"
+    }
+
+    @MainActor var onOpen: ((Target) -> Void)?
+
+    private var center: UNUserNotificationCenter { .current() }
+
+    func activate() {
+        center.delegate = self
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    func appRemoved(name: String, bundleId: String, leftovers: Int, bytes: UInt64) {
+        let content = UNMutableNotificationContent()
+        content.title = "\(name) a été supprimée"
+        content.body = "\(leftovers) restes trouvés (\(Format.bytes(bytes))). Cliquer pour les nettoyer."
+        content.userInfo = [Key.target: "uninstall", Key.bundleId: bundleId]
+        post(content, id: "removed.\(bundleId)")
+    }
+
+    func lowSpace(available: Int64) {
+        let content = UNMutableNotificationContent()
+        content.title = "Espace disque faible"
+        content.body = "Plus que \(Format.bytes(UInt64(max(available, 0)))) libres. Lance une analyse pour en récupérer."
+        content.userInfo = [Key.target: "cleanup"]
+        post(content, id: "low-space")
+    }
+
+    func memoryCritical(topName: String?, topBytes: UInt64?) {
+        let content = UNMutableNotificationContent()
+        content.title = "Mémoire saturée"
+        if let topName, let topBytes {
+            content.body = "\(topName) utilise \(Format.bytes(topBytes)). Cliquer pour voir ce qui occupe la mémoire."
+        } else {
+            content.body = "Cliquer pour voir ce qui occupe la mémoire."
+        }
+        content.userInfo = [Key.target: "memory"]
+        post(content, id: "memory-critical")
+    }
+
+    private func post(_ content: UNMutableNotificationContent, id: String) {
+        content.sound = .default
+        center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        let info = response.notification.request.content.userInfo
+        let target: Target? = switch info[Key.target] as? String {
+        case "cleanup": .cleanup
+        case "memory": .memory
+        case "uninstall": (info[Key.bundleId] as? String).map { .uninstall(bundleId: $0) }
+        default: nil
+        }
+        guard let target else { return }
+        await MainActor.run { onOpen?(target) }
+    }
+}

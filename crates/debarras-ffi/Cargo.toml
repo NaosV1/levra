@@ -1,0 +1,19 @@
+[package]
+name = "debarras-ffi"
+description = "Swift bindings (UniFFI) for the Débarras core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+crate-type = ["staticlib", "cdylib", "lib"]
+name = "debarras_ffi"
+
+[[bin]]
+name = "uniffi-bindgen-swift"
+path = "uniffi-bindgen.rs"
+
+[dependencies]
+debarras-core.workspace = true
+uniffi = { workspace = true, features = ["cli"] }

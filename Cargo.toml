@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = ["crates/debarras-core", "crates/debarras-cli", "crates/debarras-ffi"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+
+[workspace.dependencies]
+blake3 = "1.8"
+debarras-core = { path = "crates/debarras-core" }
+libc = "0.2"
+plist = "1.10"
+rayon = "1.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.27"
+uniffi = "0.32"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
