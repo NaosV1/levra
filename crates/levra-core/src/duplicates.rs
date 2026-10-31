@@ -15,11 +15,10 @@
 //! `.photoslibrary`…) are not walked.
 
 use std::collections::{HashMap, HashSet};
-use std::ffi::CString;
+use std::ffi::{CString, OsStr};
 use std::fs::{self, File};
 use std::hash::Hash;
 use std::io::{self, Read, Seek, SeekFrom};
-use std::os::macos::fs::MetadataExt as _;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -30,12 +29,15 @@ use rayon::prelude::*;
 use serde::Serialize;
 
 use crate::execute::{Action, ExecutionReport, Failure};
-use crate::walk::{ScanState, allocated};
+use crate::listing::{EntryKind, list_dir};
+use crate::walk::ScanState;
 
 /// Size of the head and of the tail hashed by the second pass.
 const SAMPLE_BYTES: u64 = 64 * 1024;
-/// `SF_DATALESS` from `<sys/stat.h>`: the content is in iCloud only.
-const SF_DATALESS: u32 = 0x4000_0000;
+/// Lecture par morceaux de 4 Mio pr le hachage complet.
+const FULL_CHUNK_BYTES: usize = 4 << 20;
+/// À partir de là le hachage d'un fichier se fait sur plusieurs cœurs.
+const PARALLEL_HASH_BYTES: u64 = 16 << 20;
 /// Folders of installed dependencies, rebuilt by their tools.
 const DEPENDENCY_DIRS: &[&str] = &["node_modules", "Pods", "DerivedData"];
 
@@ -169,7 +171,7 @@ fn collect(dir: &Path, dev: u64, options: &DuplicateOptions, state: &ScanState, 
     if state.cancel.is_cancelled() {
         return;
     }
-    let entries = match fs::read_dir(dir) {
+    let entries = match list_dir(dir) {
         Ok(entries) => entries,
         Err(err) => {
             if err.kind() == io::ErrorKind::PermissionDenied {
@@ -178,30 +180,39 @@ fn collect(dir: &Path, dev: u64, options: &DuplicateOptions, state: &ScanState, 
             return;
         }
     };
+    // le marqueur se voit ds le listage qu'on a déjà, pas besoin de 2 stat par dossier
+    if dir != options.home.as_path()
+        && entries
+            .iter()
+            .any(|e| e.kind == EntryKind::File && (e.name == "CACHEDIR.TAG" || e.name == "pyvenv.cfg"))
+    {
+        return;
+    }
 
     let mut files = Vec::new();
     let mut subdirs = Vec::new();
-    for entry in entries.flatten() {
-        // An lstat: symlinks are neither followed nor compared.
-        let Ok(meta) = entry.metadata() else {
-            continue;
-        };
-        let path = entry.path();
-        if meta.is_dir() {
-            if meta.dev() == dev && !is_skipped_dir(&path, &options.home) {
-                subdirs.push(path);
+    for entry in entries {
+        match entry.kind {
+            EntryKind::Dir => {
+                // dossier cloud pas téléchargé : rien sur le disque et le lister partirait sur le réseau
+                if entry.dev == dev && !entry.is_dataless() && !is_skipped_dir(dir, &entry.name, &options.home) {
+                    subdirs.push(dir.join(&entry.name));
+                }
             }
-        } else if meta.is_file() && meta.len() >= options.min_bytes && !is_dataless(&meta) {
-            files.push(Candidate {
-                path,
-                dev: meta.dev(),
-                ino: meta.ino(),
-                scanned: Fingerprint {
-                    len: meta.len(),
-                    modified: meta.modified().ok(),
-                },
-                allocated: allocated(&meta),
-            });
+            EntryKind::File if entry.len >= options.min_bytes && !entry.is_dataless() && entry.allocated > 0 => {
+                files.push(Candidate {
+                    path: dir.join(&entry.name),
+                    dev: entry.dev,
+                    ino: entry.ino,
+                    scanned: Fingerprint {
+                        len: entry.len,
+                        modified: entry.modified,
+                    },
+                    allocated: entry.allocated,
+                });
+            }
+            // les liens symboliques ne sont ni suivis ni comparés
+            _ => {}
         }
     }
     state.progress.add(files.len() as u64, 0);
@@ -211,16 +222,11 @@ fn collect(dir: &Path, dev: u64, options: &DuplicateOptions, state: &ScanState, 
         .for_each(|sub| collect(sub, dev, options, state, found));
 }
 
-fn is_skipped_dir(path: &Path, home: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+fn is_skipped_dir(parent: &Path, name: &OsStr, home: &Path) -> bool {
+    let Some(name) = name.to_str() else {
         return false;
     };
-    name.starts_with('.')
-        || name == "Library" && path.parent() == Some(home)
-        || DEPENDENCY_DIRS.contains(&name)
-        || is_bundle(name)
-        || path.join("CACHEDIR.TAG").is_file()
-        || path.join("pyvenv.cfg").is_file()
+    name.starts_with('.') || name == "Library" && parent == home || DEPENDENCY_DIRS.contains(&name) || is_bundle(name)
 }
 
 /// Bundles (`Docker.app`, `Photos Library.photoslibrary`, `Notes.rtfd`)
@@ -230,10 +236,6 @@ fn is_bundle(name: &str) -> bool {
         .extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.len() >= 2 && ext.chars().all(|c| c.is_ascii_alphabetic()))
-}
-
-fn is_dataless(meta: &fs::Metadata) -> bool {
-    meta.st_flags() & SF_DATALESS != 0 || meta.blocks() == 0
 }
 
 /// Groups items by key, computed in parallel; keeps groups of two or more.
@@ -294,10 +296,27 @@ fn full_hash(candidate: &Candidate, state: &ScanState) -> Option<blake3::Hash> {
     if state.cancel.is_cancelled() {
         return None;
     }
-    let file = File::open(&candidate.path).ok()?;
+    let mut file = File::open(&candidate.path).ok()?;
     let mut hasher = blake3::Hasher::new();
-    hasher.update_reader(file).ok()?;
-    state.progress.add(0, candidate.scanned.len);
+    // gros morceaux = moins d'appels read, et au dessus de qq Mo blake3 se répartit sur tt les cœurs
+    let mut buffer = vec![0u8; FULL_CHUNK_BYTES];
+    let parallel = candidate.scanned.len >= PARALLEL_HASH_BYTES;
+    loop {
+        if state.cancel.is_cancelled() {
+            return None;
+        }
+        let read = read_up_to(&mut file, &mut buffer).ok()?;
+        if read == 0 {
+            break;
+        }
+        if parallel {
+            hasher.update_rayon(&buffer[..read]);
+        } else {
+            hasher.update(&buffer[..read]);
+        }
+        // la barre avance pendant les gros fichiers au lieu de sauter d'un coup
+        state.progress.add(0, read as u64);
+    }
     Some(hasher.finalize())
 }
 
