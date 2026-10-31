@@ -13,6 +13,7 @@ pub mod explore;
 pub mod guard;
 pub mod launchd;
 pub mod leftovers;
+mod listing;
 pub mod memory;
 pub mod time;
 pub mod tools;
