@@ -56,8 +56,17 @@ final class CleanupModel {
     private(set) var error: String?
     var selection: Set<String> = []
 
+    /// While cleaning: the item being removed, those waiting behind it,
+    /// how many are over and what they freed so far.
+    private(set) var cleaningCurrent: String?
+    private(set) var cleaningQueue: [String] = []
+    private(set) var cleaningTotal = 0
+    private(set) var cleaningDone = 0
+    private(set) var freedSoFar: UInt64 = 0
+
     private var report: CleanupReport?
     private var cancel: CancelHandle?
+    private var stopRequested = false
 
     var selectedFindings: [FindingInfo] {
         findings.filter { selection.contains($0.id) }
@@ -134,15 +143,57 @@ final class CleanupModel {
     }
 
     func clean() async {
-        guard let report, !selection.isEmpty else { return }
+        guard let report, !selection.isEmpty, phase != .cleaning else { return }
+        // un par un du plus gros au plus petit, comme ça on montre où on en est pour de vrai
+        let ids = findings.map(\.id).filter(selection.contains)
         phase = .cleaning
-        let ids = Array(selection)
-        let result = await background { report.execute(ids: ids) }
-        outcome = await CleanupOutcome.finishing(result)
-        let done = Set(result.completed)
-        findings.removeAll { done.contains($0.id) }
-        selection.subtract(done)
+        stopRequested = false
+        cleaningTotal = ids.count
+        cleaningDone = 0
+        freedSoFar = 0
+        cleaningQueue = ids
+
+        var completed: [String] = []
+        var pending: [PendingRemoval] = []
+        var failures: [FailureInfo] = []
+        var freed: UInt64 = 0
+        for id in ids {
+            guard !stopRequested else { break }
+            cleaningQueue.removeFirst()
+            cleaningCurrent = id
+            let result = await background { report.execute(ids: [id]) }
+            completed += result.completed
+            pending += result.needsAuthorization
+            failures += result.failures
+            freed += result.freedBytes
+            freedSoFar = freed
+            cleaningDone += 1
+            // la ligne part dès que c fait, pas tt d'un coup à la fin
+            if result.completed.contains(id) {
+                findings.removeAll { $0.id == id }
+                selection.remove(id)
+            }
+        }
+        cleaningCurrent = nil
+        cleaningQueue = []
+
+        let result = ExecutionResult(
+            completed: completed,
+            freedBytes: freed,
+            needsAuthorization: pending,
+            failures: failures
+        )
+        let outcome = await CleanupOutcome.finishing(result)
+        self.outcome = outcome
+        findings.removeAll { outcome.handled.contains($0.id) }
+        selection.subtract(outcome.handled)
         phase = .ready
+    }
+
+    /// Stops after the item being removed: one cannot be cut in half.
+    func stopCleaning() {
+        stopRequested = true
+        cleaningQueue = []
     }
 
     func dismissOutcome() {
