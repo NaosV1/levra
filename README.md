@@ -6,7 +6,11 @@ Faire de la place sur un Mac sans rien casser, et désinstaller les apps complè
 - **Nettoyage** : trouve ce qui peut partir (builds de projets, caches de paquets et d'apps, Xcode, simulateurs, Android, Docker, worktrees git, installeurs, corbeille, sauvegardes iPhone) classé du plus sûr au plus délicat ; pour chaque élément, sa taille réelle et, sur demande, l'action exacte qui sera exécutée.
 - **Explorateur** : mesure le dossier personnel dès l'ouverture (ou un autre dossier, ≈ 5× plus vite que `du`), puis navigation instantanée. Mesuré depuis `/`, les dossiers de macOS sont regroupés à part.
 - **Gros fichiers** : les plus gros fichiers, filtrables par taille et par ancienneté, avec leur emplacement dans les mots du Finder. Les fichiers système sont signalés et ne peuvent pas être cochés.
+- **Vue en carte** : dans l'Explorateur, chaque élément est un rectangle proportionnel à sa taille ; un clic sur un dossier zoome dedans. La mesure du dossier personnel est enregistrée : au lancement suivant elle s'affiche tout de suite, puis seuls les dossiers modifiés entre-temps (d'après l'historique FSEvents de macOS) sont relus.
 - **Doublons** : fichiers au contenu identique dans le dossier personnel, avec l'espace *réellement* libérable. Les copies clonées par le Finder (clones APFS), qui partagent leurs données et ne libéreraient rien, sont écartées.
+- **Photos similaires** : rafales, photos reprises, copies redimensionnées, repérées par une empreinte de l'image (hachage par différence) plutôt que par leurs octets. La photothèque Photos n'est pas touchée.
+- **Vieux projets** : les projets de développement sans activité depuis des mois, compressés en `.tar.gz` sans leurs dépendances ni builds (qui se recréent), rangés où l'on veut (un disque externe libère toute la place), puis mis à la corbeille une fois l'archive relue.
+- **Évolution** : le disque est mesuré une fois par jour ; l'Accueil montre la courbe sur 30 jours et ce qui a grossi dans la semaine, et une notification signale un dossier qui prend plusieurs Go d'un coup.
 - **Mémoire** :
   - la mémoire vive comptée comme le Moniteur d'activité (apps, verrouillée, compressée, cache, swap, pression) ;
   - les apps et programmes qui en consomment le plus, chaque app regroupant ses processus d'aide ;
@@ -16,7 +20,8 @@ Faire de la place sur un Mac sans rien casser, et désinstaller les apps complè
 - **Désinstallation complète** : l'app et tout ce qu'elle laisse (préférences, conteneurs, caches, agents de démarrage, services, outils privilégiés, reçus…), en tenant compte des fichiers partagés avec d'autres apps installées. `brew uninstall --zap` est proposé quand l'app vient de Homebrew. Les apps pas ouvertes depuis 6 mois sont regroupées et peuvent partir ensemble, avec une seule demande de mot de passe.
 - **Allègement** : ce que les apps lancent en arrière-plan (agents et services launchd : outils de mise à jour, assistants), rattaché à l'app installée dont il dépend. Ceux qu'aucune app installée n'explique sont signalés, et ceux qui ne lancent plus rien sont proposés à la suppression. La page dit aussi ce qu'il en est des apps d'Apple : Bourse, News, Astuces et les autres apps intégrées à macOS sont sur le volume système scellé et ne peuvent pas être supprimées ; GarageBand, iMovie, Pages, Numbers et Keynote, si elles sont installées, se désinstallent comme les autres.
 - **Détection** : quand une app disparaît de `/Applications` (glissée à la corbeille, supprimée depuis le Launchpad), une notification propose d'effacer ses restes.
-- **Barre des menus** : espace libre, alerte sous un seuil, et nettoyage rapide (la sélection sans risque, après confirmation) sans ouvrir la fenêtre.
+- **Barre des menus** : espace libre, alerte sous un seuil, et nettoyage rapide (la sélection sans risque, après confirmation) sans ouvrir la fenêtre. Une app glissée sur l'icône, sur son panneau ou sur l'icône du Dock ouvre sa désinstallation.
+- **Nettoyage automatique** : chaque semaine ou chaque mois au choix, la sélection sans risque part toute seule, avec une notification.
 
 ## Architecture
 
@@ -51,6 +56,7 @@ Dans `levra-core` :
 | Module | Rôle |
 |---|---|
 | `listing` | Liste un dossier avec `getattrlistbulk` : nom, taille allouée, inode, date et drapeaux de centaines d'entrées en un seul appel système, au lieu d'un `lstat` par fichier. Les dossiers iCloud ou File Provider pas téléchargés (« dataless ») ne sont jamais ouverts, et la matérialisation est coupée pour le processus : un scan ne télécharge rien. |
+| `archive` | Repère les projets sans activité (hors dépendances et `.git`), les compresse sans ce qui se recrée et vérifie l'archive. |
 | `walk` | Parcours parallèle (rayon). Taille *allouée* comme `du` : fichiers creux au réel, liens physiques comptés une fois, sans changer de volume. |
 | `explore` | Arbre complet d'un dossier ; les fichiers < 1 Mo sont regroupés par dossier pour borner la mémoire. |
 | `catalog/*` | Un détecteur par famille. Un dossier n'est signalé que si un marqueur fiable prouve ce qu'il est (`CACHEDIR.TAG`, `pyvenv.cfg`, fichier de projet voisin…). |
