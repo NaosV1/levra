@@ -41,7 +41,7 @@ Dans `app/Sources/Levra/Design` :
 | `Motion.swift` | Courbes et durées des animations, plus les transitions d'entrée et la cascade des listes. Les animations sont courtes et en « ease-out », jamais déclenchées par un raccourci clavier, et réduites à des fondus si « Réduire les animations » est activé. |
 | `Controls.swift`, `Surfaces.swift` | Composants : boutons, cases à cocher, pastilles, sélecteurs, cartes, bannières, états vides, barre d'action. |
 | `Papicons.swift` | Icônes [PapIcons](https://pub.dev/packages/papicons) converties en tracés SwiftUI par `scripts/papicons.py` (ne pas modifier à la main). |
-| `LevraMark.swift` | Le logo : un carré ouvert dont le dernier trait s'échappe. Il sert dans l'app et à l'icône, que `scripts/build-app.sh` dessine à chaque build (via `scripts/artwork.swift`, au format du modèle d'icône macOS) : pour la changer, on ne modifie que ce fichier. |
+| `LevraMark.swift` | Le logo : un disque dur en verre et une étincelle, sur une tuile en dégradé rose, violet et bleu. Il sert dans l'app et à l'icône, que `scripts/build-app.sh` dessine à chaque build (via `scripts/artwork.swift`, au format du modèle d'icône macOS) : pour la changer, on ne modifie que ce fichier. |
 
 Pour ajouter une icône, ajoute son nom à `ICONS` dans `scripts/papicons.py`, télécharge le paquet PapIcons, puis lance :
 
