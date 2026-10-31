@@ -8,7 +8,7 @@ import Observation
 @Observable
 final class AppModel {
     enum Section: String, CaseIterable, Identifiable {
-        case home, cleanup, explorer, largeFiles, duplicates, memory, apps, debloat
+        case home, cleanup, explorer, largeFiles, duplicates, photos, archive, memory, apps, debloat
 
         var id: Self { self }
 
@@ -19,6 +19,8 @@ final class AppModel {
             case .explorer: "Explorateur"
             case .largeFiles: "Gros fichiers"
             case .duplicates: "Doublons"
+            case .photos: "Photos similaires"
+            case .archive: "Vieux projets"
             case .memory: "Mémoire"
             case .apps: "Applications"
             case .debloat: "Allègement"
@@ -33,6 +35,8 @@ final class AppModel {
             case .explorer: "Où va l'espace, dossier par dossier."
             case .largeFiles: "Les fichiers les plus lourds, pour repérer les oubliés."
             case .duplicates: "Les fichiers présents en plusieurs exemplaires."
+            case .photos: "Les photos qui se ressemblent : rafales, reprises, copies."
+            case .archive: "Les projets oubliés, compressés ou rangés sur un autre disque."
             case .memory: "Ce qui occupe la mémoire vive, en direct."
             case .apps: "Tes apps, et leur désinstallation complète."
             case .debloat: "Ce que les apps lancent en arrière-plan, et les apps d'Apple."
@@ -46,6 +50,8 @@ final class AppModel {
             case .explorer: .folder
             case .largeFiles: .file
             case .duplicates: .copy
+            case .photos: .layers
+            case .archive: .package
             case .memory: .chip
             case .apps: .grid
             case .debloat: .feather
@@ -53,7 +59,32 @@ final class AppModel {
         }
     }
 
+    /// How often the safe findings are cleaned without asking.
+    enum AutoClean: String, CaseIterable, Identifiable {
+        case never, weekly, monthly
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .never: "Jamais"
+            case .weekly: "Chaque semaine"
+            case .monthly: "Chaque mois"
+            }
+        }
+
+        var interval: TimeInterval? {
+            switch self {
+            case .never: nil
+            case .weekly: 7 * 86_400
+            case .monthly: 30 * 86_400
+            }
+        }
+    }
+
     private enum Keys {
+        static let autoClean = "autoClean"
+        static let lastAutoClean = "lastAutoClean"
         static let watchUninstalls = "watchUninstalls"
         static let lowSpaceGB = "lowSpaceGB"
         static let welcomed = "welcomed"
@@ -73,10 +104,28 @@ final class AppModel {
     let cleanup = CleanupModel()
     let explorer = ExplorerModel()
     let duplicates = DuplicatesModel()
+    let photos = PhotosModel()
+    let archive = ArchiveModel()
     let memory = MemoryModel()
     let apps = AppsModel()
     let debloat = DebloatModel()
     let updates = Updates()
+    let history = DiskHistory()
+
+    var autoClean: AutoClean {
+        didSet { UserDefaults.standard.set(autoClean.rawValue, forKey: Keys.autoClean) }
+    }
+
+    /// Last cleanup run on its own, whatever it found.
+    private(set) var lastAutoClean: Date? {
+        didSet { UserDefaults.standard.set(lastAutoClean, forKey: Keys.lastAutoClean) }
+    }
+
+    /// When the next automatic cleanup is due, `nil` when they are off.
+    var nextAutoClean: Date? {
+        guard let interval = autoClean.interval else { return nil }
+        return lastAutoClean.map { $0.addingTimeInterval(interval) } ?? .now
+    }
 
     var watchUninstalls: Bool {
         didSet {
@@ -97,6 +146,7 @@ final class AppModel {
 
     private let notifier = Notifier()
     private let watcher = AppRemovalWatcher()
+    private let scheduler = HourlyScheduler()
     private var started = false
     private var warnedLowSpace = false
     private var warnedMemory = false
@@ -106,6 +156,8 @@ final class AppModel {
         watchUninstalls = defaults.object(forKey: Keys.watchUninstalls) as? Bool ?? true
         lowSpaceGB = defaults.object(forKey: Keys.lowSpaceGB) as? Int ?? 20
         showsWelcome = !defaults.bool(forKey: Keys.welcomed)
+        autoClean = defaults.string(forKey: Keys.autoClean).flatMap(AutoClean.init) ?? .never
+        lastAutoClean = defaults.object(forKey: Keys.lastAutoClean) as? Date
     }
 
     func start() async {
@@ -119,12 +171,15 @@ final class AppModel {
                 showWindow(.cleanup)
             case .memory:
                 showWindow(.memory)
+            case .explorer:
+                showWindow(.explorer)
             case let .uninstall(bundleId):
                 showWindow(.apps)
                 Task { await self.apps.prepareRemoved(bundleId: bundleId) }
             }
         }
         memory.onRefresh = { [weak self] stats in self?.memoryStats = stats }
+        AppDelegate.onOpenApp = { [weak self] url in self?.uninstallDropped(url) }
         watcher.onRemoval = { [weak self] app in self?.appRemoved(app) }
         watcher.onListChanged = { [weak self] list in self?.apps.replaceList(list) }
 
@@ -141,6 +196,44 @@ final class AppModel {
         if watchUninstalls {
             startWatching()
         }
+        // la mesure du dossier perso enregistrée est rechargée tt de suite, Explorateur et Gros fichiers sont instantanés
+        Task { [weak self] in await self?.explorer.restore() }
+        scheduler.start { [weak self] in await self?.housekeeping() }
+        // 1er passage un peu après le lancement pr pas ralentir l'ouverture
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            await self?.housekeeping()
+        }
+    }
+
+    /// What runs on its own about once an hour: today's disk measurement,
+    /// with a word about folders that suddenly grew, and the automatic
+    /// cleanup when it is due.
+    func housekeeping() async {
+        let grown = await history.recordIfDue()
+        for growth in grown.prefix(2) {
+            notifier.folderGrew(path: growth.path, grown: growth.grown)
+        }
+        await autoCleanIfDue()
+    }
+
+    private func autoCleanIfDue() async {
+        guard let due = nextAutoClean, due <= .now else { return }
+        // on touche à rien si l'utilisateur est déjà en train d'analyser ou de nettoyer
+        switch cleanup.phase {
+        case .scanning, .cleaning: return
+        case .idle, .ready: break
+        }
+        await cleanup.scan()
+        guard cleanup.phase == .ready else { return }
+        lastAutoClean = .now
+        // en dessous de 50 Mo ça vaut pas une notif
+        guard cleanup.recommendedBytes >= 50_000_000 else { return }
+        await cleanup.cleanRecommended()
+        refreshDisk()
+        if let outcome = cleanup.outcome {
+            notifier.cleaned(bytes: outcome.freedBytes, failures: outcome.failures.count, automatic: true)
+        }
     }
 
     /// Brings the window back, closed or not, on a page if one is given.
@@ -149,6 +242,13 @@ final class AppModel {
             self.section = section
         }
         windowOpener?()
+    }
+
+    /// An app dropped on the menu bar icon, its panel or the Dock icon:
+    /// opens its uninstall review.
+    func uninstallDropped(_ url: URL) {
+        showWindow(.apps)
+        Task { await apps.prepareDropped(url) }
     }
 
     /// The menu bar's one-click cleanup: the recommended findings only,
