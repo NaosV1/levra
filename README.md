@@ -50,6 +50,7 @@ Dans `levra-core` :
 
 | Module | Rôle |
 |---|---|
+| `listing` | Liste un dossier avec `getattrlistbulk` : nom, taille allouée, inode, date et drapeaux de centaines d'entrées en un seul appel système, au lieu d'un `lstat` par fichier. Les dossiers iCloud ou File Provider pas téléchargés (« dataless ») ne sont jamais ouverts, et la matérialisation est coupée pour le processus : un scan ne télécharge rien. |
 | `walk` | Parcours parallèle (rayon). Taille *allouée* comme `du` : fichiers creux au réel, liens physiques comptés une fois, sans changer de volume. |
 | `explore` | Arbre complet d'un dossier ; les fichiers < 1 Mo sont regroupés par dossier pour borner la mémoire. |
 | `catalog/*` | Un détecteur par famille. Un dossier n'est signalé que si un marqueur fiable prouve ce qu'il est (`CACHEDIR.TAG`, `pyvenv.cfg`, fichier de projet voisin…). |
