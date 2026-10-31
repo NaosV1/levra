@@ -393,6 +393,62 @@ impl ExploreTree {
     pub fn denied_paths(&self) -> Vec<String> {
         self.denied.iter().map(|p| text(p)).collect()
     }
+
+    pub fn root_path(&self) -> String {
+        text(self.tree.root_path())
+    }
+
+    /// The folder at `path`, to find the displayed folders again after a refresh.
+    pub fn node_at(&self, path: String) -> Option<NodeInfo> {
+        self.tree.find(Path::new(&path)).and_then(|id| self.info(id))
+    }
+
+    /// Saves the measurement, `stamp` being the FSEvents event id it is up to date with.
+    pub fn save_cache(&self, path: String, stamp: u64) -> Result<(), LevraError> {
+        self.tree.save(Path::new(&path), stamp).map_err(io_error)
+    }
+
+    /// A copy brought up to date after changes inside these folders.
+    pub fn refreshed(
+        &self,
+        changed: Vec<String>,
+        cancel: Arc<CancelHandle>,
+        listener: Arc<dyn ProgressListener>,
+    ) -> Result<Arc<ExploreTree>, LevraError> {
+        let state = core::ScanState::new(cancel.token.clone());
+        let changed: Vec<PathBuf> = changed.into_iter().map(PathBuf::from).collect();
+        let mut tree = self.tree.clone();
+        with_progress(&state, &listener, || tree.refresh(&state, &changed)).map_err(io_error)?;
+        let mut denied = self.denied.clone();
+        denied.extend(state.denied());
+        Ok(Arc::new(ExploreTree {
+            home: self.home.clone(),
+            tree,
+            denied,
+        }))
+    }
+}
+
+#[derive(uniffi::Record)]
+pub struct CachedExplore {
+    pub tree: Arc<ExploreTree>,
+    /// FSEvents event id the saved measurement is up to date with.
+    pub stamp: u64,
+}
+
+/// A measurement saved by [`ExploreTree::save_cache`].
+#[uniffi::export]
+pub fn load_explore_cache(path: String) -> Result<CachedExplore, LevraError> {
+    let home = home()?;
+    let (tree, stamp) = core::Tree::load(Path::new(&path)).map_err(io_error)?;
+    Ok(CachedExplore {
+        tree: Arc::new(ExploreTree {
+            home,
+            tree,
+            denied: Vec::new(),
+        }),
+        stamp,
+    })
 }
 
 #[uniffi::export]
@@ -414,6 +470,13 @@ pub fn explore(
         tree,
         denied: state.denied(),
     }))
+}
+
+/// Size on disk of each folder, in the same order; 0 for what is missing.
+#[uniffi::export]
+pub fn measure_folders(paths: Vec<String>) -> Vec<u64> {
+    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    core::walk::measure_all(&paths)
 }
 
 /// Size of the Trash, `None` when macOS keeps it closed (no Full Disk
@@ -440,6 +503,78 @@ pub fn move_to_trash(paths: Vec<String>) -> Result<ExecutionResult, LevraError> 
         report.run(&path, bytes, &action, &home);
     }
     Ok(report.into())
+}
+
+// MARK: Old projects
+
+#[derive(uniffi::Record)]
+pub struct OldProjectInfo {
+    pub path: String,
+    pub name: String,
+    /// Unix seconds.
+    pub last_activity: u64,
+    pub bytes: u64,
+    /// Dependencies and builds, left out of the archive.
+    pub regenerable_bytes: u64,
+    pub is_git: bool,
+    pub has_uncommitted: bool,
+}
+
+/// Projects in the usual development folders untouched for `idle_days`.
+#[uniffi::export]
+pub fn find_old_projects(
+    idle_days: u32,
+    cancel: Arc<CancelHandle>,
+    listener: Arc<dyn ProgressListener>,
+) -> Result<Vec<OldProjectInfo>, LevraError> {
+    let home = home()?;
+    let state = core::ScanState::new(cancel.token.clone());
+    let roots = core::ScanOptions::for_home(&home).project_roots;
+    let idle = Duration::from_secs(u64::from(idle_days) * 86_400);
+    let projects = with_progress(&state, &listener, || {
+        core::archive::find_old_projects(&roots, idle, &home, &state)
+    });
+    Ok(projects
+        .into_iter()
+        .map(|project| OldProjectInfo {
+            path: text(&project.path),
+            name: project.name,
+            last_activity: project.last_activity,
+            bytes: project.bytes,
+            regenerable_bytes: project.regenerable_bytes,
+            is_git: project.is_git,
+            has_uncommitted: project.has_uncommitted,
+        })
+        .collect())
+}
+
+#[derive(uniffi::Record)]
+pub struct ArchiveOutcome {
+    pub archive_path: String,
+    pub archive_bytes: u64,
+    /// The project going to the Trash once its archive is checked.
+    pub result: ExecutionResult,
+}
+
+/// Compresses the project into `destination`, checks the archive, then
+/// moves the project to the Trash. Nothing is moved if the archive fails.
+#[uniffi::export]
+pub fn archive_project(path: String, destination: String) -> Result<ArchiveOutcome, LevraError> {
+    let home = home()?;
+    let project = PathBuf::from(&path);
+    let archive = core::archive::archive_project(&project, Path::new(&destination), &core::ScanState::default())
+        .map_err(|err| LevraError::Io {
+            message: format!("Archive de {} impossible : {err}", project.display()),
+        })?;
+    let archive_bytes = core::ScanState::default().allocated_size(&archive);
+    let bytes = core::ScanState::default().allocated_size(&project);
+    let mut report = core::ExecutionReport::default();
+    report.run(&path, bytes, &core::Action::Trash { paths: vec![project] }, &home);
+    Ok(ArchiveOutcome {
+        archive_path: text(&archive),
+        archive_bytes,
+        result: report.into(),
+    })
 }
 
 // MARK: Duplicates
