@@ -368,6 +368,8 @@ fn worktree_findings(state: &ScanState, git: &Path, home: &Path, repo: &Project)
                 action: Action::Command {
                     program: git.to_path_buf(),
                     args: vec!["-C".into(), repo_text.clone().into_owned(), "worktree".into(), "remove".into(), path_text],
+                    // The folder goes whole: its size is what is freed.
+                    measure: None,
                 },
                 last_used: last_activity(Some(git), home, &wt.path),
             }

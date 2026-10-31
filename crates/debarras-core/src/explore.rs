@@ -8,13 +8,12 @@
 use std::ffi::OsString;
 use std::fs;
 use std::io;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use rayon::prelude::*;
 
-use crate::walk::{HardLinks, ScanState, allocated};
+use crate::walk::{Bounds, HardLinks, ScanState, allocated};
 
 pub type NodeId = usize;
 
@@ -153,7 +152,7 @@ pub fn explore(state: &ScanState, root: &Path, min_file_bytes: u64) -> io::Resul
     let built = build_dir(
         state,
         &Context {
-            dev: meta.dev(),
+            bounds: Bounds::new(root, &meta),
             links: &links,
             min_file_bytes,
         },
@@ -171,7 +170,7 @@ pub fn explore(state: &ScanState, root: &Path, min_file_bytes: u64) -> io::Resul
 }
 
 struct Context<'a> {
-    dev: u64,
+    bounds: Bounds,
     links: &'a HardLinks,
     min_file_bytes: u64,
 }
@@ -201,7 +200,7 @@ fn build_dir(
     own_bytes: u64,
     modified: Option<SystemTime>,
 ) -> BuiltDir {
-    let level = state.read_level(path, ctx.dev, ctx.links).unwrap_or_default();
+    let level = state.read_level(path, &ctx.bounds, ctx.links).unwrap_or_default();
 
     let subdirs: Vec<BuiltDir> = level
         .subdirs

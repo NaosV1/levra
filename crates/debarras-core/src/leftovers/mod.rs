@@ -325,6 +325,7 @@ impl UninstallPlan {
             let action = Action::Command {
                 program: brew,
                 args: ["uninstall", "--cask", "--zap", token].map(str::to_owned).to_vec(),
+                measure: None,
             };
             report.run(&format!("brew:{token}"), 0, &action, home);
         }

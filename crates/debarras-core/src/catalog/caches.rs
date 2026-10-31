@@ -225,7 +225,7 @@ fn known_finding(options: &ScanOptions, state: &ScanState, known: &KnownCache) -
     let finding = deletable(
         state,
         Category::PackageCaches,
-        path,
+        path.clone(),
         known.title.to_owned(),
         known.detail.to_owned(),
         known.safety,
@@ -239,9 +239,12 @@ fn known_finding(options: &ScanOptions, state: &ScanState, known: &KnownCache) -
         } => match tools::find(name, &options.home) {
             Some(program) => Some(Finding {
                 id: format!("tool:{name}:{}", known.path),
+                // Only the cache is measured: old versions `brew cleanup`
+                // also uninstalls are freed on top of what is reported.
                 action: Action::Command {
                     program,
                     args: args.iter().map(|a| (*a).to_owned()).collect(),
+                    measure: Some(path),
                 },
                 ..finding
             }),

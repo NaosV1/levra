@@ -38,7 +38,7 @@ struct LargeFilesView: View {
             if explorer.phase == .ready {
                 list
             } else if case let .scanning(files, bytes) = explorer.phase {
-                ScanningState(title: "Mesure du dossier personnel…", files: files, bytes: bytes) { explorer.cancelScan() }
+                ScanningState(title: "Mesure du dossier personnel…", icon: .file, files: files, bytes: bytes) { explorer.cancelScan() }
             } else {
                 EmptyState(
                     icon: .file,
@@ -147,12 +147,23 @@ private struct FileRow: View {
     var body: some View {
         CardRow(isLast: isLast) {
             HStack(spacing: 12) {
-                Checkbox(isOn: $isSelected)
+                if file.removable {
+                    Checkbox(isOn: $isSelected)
+                } else {
+                    // Keeps the names aligned with the selectable rows.
+                    Color.clear.frame(width: 16, height: 16)
+                }
                 if let path {
                     AppIcon(path: path, size: 20)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(file.name).textStyle(.body).lineLimit(1)
+                    HStack(spacing: 8) {
+                        Text(file.name).textStyle(.body).lineLimit(1)
+                        if !file.removable {
+                            Badge(text: "Fichier système", tone: .neutral)
+                                .help("Débarras ne le supprime pas : il appartient au système ou à un emplacement qu'il ne nettoie pas.")
+                        }
+                    }
                     Text(path?.abbreviatingHome ?? "").textStyle(.mono).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer(minLength: 12)

@@ -33,7 +33,7 @@ struct DuplicatesView: View {
                     }
                 }
             case let .scanning(files, bytes):
-                ScanningState(title: "Comparaison des fichiers…", files: files, bytes: bytes) { model.cancelScan() }
+                ScanningState(title: "Comparaison des fichiers…", icon: .copy, files: files, bytes: bytes) { model.cancelScan() }
             case .ready, .removing:
                 results
             }

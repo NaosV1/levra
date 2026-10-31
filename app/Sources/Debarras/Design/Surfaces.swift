@@ -214,34 +214,6 @@ struct Spinner: View {
     }
 }
 
-/// What a scan is doing while it runs.
-struct ScanningState: View {
-    let title: String
-    let files: UInt64
-    let bytes: UInt64
-    let onCancel: () -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Spinner(size: 22)
-            VStack(spacing: 6) {
-                Text(title).textStyle(.heading)
-                HStack(spacing: 14) {
-                    Label { Text("\(Format.count(files)) fichiers") } icon: { Icon(.file, size: 13) }
-                    Label { Text("\(Format.bytes(bytes)) parcourus") } icon: { Icon(.hardDrive, size: 13) }
-                }
-                .textStyle(.secondary)
-                .monospacedDigit()
-                .contentTransition(.numericText())
-                .animation(Motion.snappy, value: files)
-            }
-            Button("Annuler", action: onCancel).buttonStyle(.app(.ghost))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 72)
-    }
-}
-
 /// Share of a whole, as a thin track.
 struct SizeBar: View {
     let fraction: Double

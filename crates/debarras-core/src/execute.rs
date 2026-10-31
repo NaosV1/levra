@@ -17,6 +17,7 @@ use serde::Serialize;
 
 use crate::guard::{self, GuardError};
 use crate::tools;
+use crate::walk::ScanState;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -26,7 +27,15 @@ pub enum Action {
     /// Remove for good. Reserved for data tools regenerate on their own.
     Delete { paths: Vec<PathBuf> },
     /// Let the owning tool clean up (`docker builder prune`, `simctl`…).
-    Command { program: PathBuf, args: Vec<String> },
+    Command {
+        program: PathBuf,
+        args: Vec<String>,
+        /// The folder the tool shrinks, when it frees only part of what the
+        /// scan estimated (`pnpm store prune` keeps what projects use): it
+        /// is measured before and after, and the report gives the real
+        /// difference.
+        measure: Option<PathBuf>,
+    },
     /// Nothing automatic; the finding's detail says what to do.
     Manual,
 }
@@ -41,7 +50,7 @@ impl Action {
 
     pub fn command_line(&self) -> Option<String> {
         match self {
-            Self::Command { program, args } => {
+            Self::Command { program, args, .. } => {
                 let name = program
                     .file_name()
                     .map_or_else(|| program.display().to_string(), |n| n.to_string_lossy().into_owned());
@@ -89,6 +98,7 @@ impl ExecutionReport {
     /// Runs `action` for the item `id` and records the outcome.
     pub fn run(&mut self, id: &str, bytes: u64, action: &Action, home: &Path) {
         let before = (self.needs_authorization.len(), self.failures.len());
+        let mut freed = bytes;
         match action {
             Action::Trash { paths } => {
                 for path in paths {
@@ -100,12 +110,19 @@ impl ExecutionReport {
                     self.record(id, path, delete(path, home));
                 }
             }
-            Action::Command { program, args } => {
-                if let Err(reason) = run_command(program, args, home) {
-                    self.failures.push(Failure {
+            Action::Command { program, args, measure } => {
+                let size = |dir: &Path| ScanState::default().allocated_size(dir);
+                let size_before = measure.as_deref().map(size);
+                match run_command(program, args, home) {
+                    Ok(()) => {
+                        if let (Some(dir), Some(size_before)) = (measure, size_before) {
+                            freed = size_before.saturating_sub(size(dir));
+                        }
+                    }
+                    Err(reason) => self.failures.push(Failure {
                         target: action.command_line().unwrap_or_default(),
                         reason,
-                    });
+                    }),
                 }
             }
             Action::Manual => return,
@@ -115,10 +132,10 @@ impl ExecutionReport {
             return;
         }
         match self.needs_authorization.get_mut(pending_before) {
-            Some(first_pending) => first_pending.bytes = bytes,
+            Some(first_pending) => first_pending.bytes = freed,
             None => {
                 self.completed.push(id.to_owned());
-                self.freed_bytes += bytes;
+                self.freed_bytes += freed;
             }
         }
     }
@@ -254,6 +271,7 @@ pub fn delete(path: &Path, home: &Path) -> Result<(), RemovalError> {
 fn run_command(program: &Path, args: &[String], home: &Path) -> Result<(), String> {
     let output = Command::new(program)
         .args(args)
+        .current_dir(home)
         .env("PATH", tools::search_path(home))
         .stdin(Stdio::null())
         .output()
@@ -261,9 +279,18 @@ fn run_command(program: &Path, args: &[String], home: &Path) -> Result<(), Strin
     if output.status.success() {
         return Ok(());
     }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let last_line = stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("échec");
-    Err(last_line.trim().to_owned())
+    // Some tools (pnpm) print their errors on standard output.
+    let last_line = |bytes: &[u8]| {
+        String::from_utf8_lossy(bytes)
+            .lines()
+            .rev()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(str::to_owned)
+    };
+    Err(last_line(&output.stderr)
+        .or_else(|| last_line(&output.stdout))
+        .unwrap_or_else(|| "échec".to_owned()))
 }
 
 #[cfg(test)]
@@ -401,12 +428,66 @@ mod tests {
     }
 
     #[test]
+    fn a_partial_cleanup_reports_what_it_really_freed() {
+        let (_dir, home) = home();
+        let store = home.join("Library/pnpm/store");
+        fs::create_dir_all(&store).unwrap();
+        fs::write(store.join("unused"), vec![1u8; 1_000_000]).unwrap();
+        fs::write(store.join("used"), vec![1u8; 1_000_000]).unwrap();
+
+        // Like `pnpm store prune`: only part of the folder goes.
+        let mut report = ExecutionReport::default();
+        let action = Action::Command {
+            program: PathBuf::from("/bin/rm"),
+            args: vec![store.join("unused").display().to_string()],
+            measure: Some(store.clone()),
+        };
+        report.run("prune", 2_000_000, &action, &home);
+
+        assert_eq!(report.completed, vec!["prune".to_owned()]);
+        assert!(
+            (1_000_000..1_100_000).contains(&report.freed_bytes),
+            "{} instead of the 2 MB estimate",
+            report.freed_bytes
+        );
+    }
+
+    #[test]
+    fn commands_run_from_the_home_folder() {
+        // An app opened from the Finder runs in `/`, which is read-only:
+        // pnpm failed there trying to write next to itself.
+        let (_dir, home) = home();
+        let mut report = ExecutionReport::default();
+        let action = Action::Command {
+            program: PathBuf::from("/bin/sh"),
+            args: vec!["-c".into(), format!("test \"$(pwd -P)\" = '{}'", home.display())],
+            measure: None,
+        };
+        report.run("pwd", 1, &action, &home);
+        assert_eq!(report.completed, vec!["pwd".to_owned()], "{:?}", report.failures);
+    }
+
+    #[test]
+    fn an_error_printed_on_standard_output_is_reported() {
+        let (_dir, home) = home();
+        let mut report = ExecutionReport::default();
+        let action = Action::Command {
+            program: PathBuf::from("/bin/sh"),
+            args: vec!["-c".into(), "echo ' EROFS  read-only file system'; exit 1".into()],
+            measure: None,
+        };
+        report.run("pnpm", 1, &action, &home);
+        assert_eq!(report.failures[0].reason, "EROFS  read-only file system");
+    }
+
+    #[test]
     fn failed_commands_are_reported_with_their_last_error_line() {
         let (_dir, home) = home();
         let mut report = ExecutionReport::default();
         let action = Action::Command {
             program: PathBuf::from("/bin/ls"),
             args: vec!["/nonexistent/debarras".into()],
+            measure: None,
         };
         report.run("ls", 1, &action, &home);
 

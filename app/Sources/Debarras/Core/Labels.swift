@@ -58,11 +58,19 @@ extension DebarrasBindings.Category {
         case .personalFiles: .user
         }
     }
+}
 
-    /// Display order, most commonly useful first.
-    static let ordered: [DebarrasBindings.Category] = [
-        .projectBuilds, .docker, .xcode, .android, .packageCaches, .appCaches, .gitWorktrees, .personalFiles,
-    ]
+extension ScanStep {
+    var label: String {
+        switch self {
+        case .projects: "Projets de développement"
+        case .caches: "Caches des apps"
+        case .xcode: "Xcode et simulateurs"
+        case .android: "Android"
+        case .docker: "Docker"
+        case .personalFiles: "Corbeille et installeurs"
+        }
+    }
 }
 
 extension Safety {

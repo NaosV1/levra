@@ -118,6 +118,7 @@ struct Device {
     name: String,
     state: String,
     is_available: bool,
+    data_path: Option<PathBuf>,
     #[serde(default)]
     data_path_size: u64,
     last_used_at: Option<String>,
@@ -145,9 +146,11 @@ fn simulator_findings(json: &str) -> Vec<Finding> {
                         .to_owned(),
                     bytes: device.data_path_size.saturating_sub(ERASED_SIMULATOR_BYTES),
                     safety: Safety::Review,
+                    // What erasing keeps varies: measured rather than estimated.
                     action: Action::Command {
                         program: PathBuf::from(XCRUN),
                         args: vec!["simctl".into(), "erase".into(), device.udid.clone()],
+                        measure: device.data_path.clone(),
                     },
                     last_used: device.last_used_at.as_deref().and_then(crate::time::parse_utc),
                 });
@@ -162,9 +165,11 @@ fn simulator_findings(json: &str) -> Vec<Finding> {
             detail: "Simulateurs dont le runtime n'est plus installé : ils ne peuvent plus démarrer.".to_owned(),
             bytes: unavailable_bytes,
             safety: Safety::Safe,
+            // Deleting removes the devices whole: their size is what goes.
             action: Action::Command {
                 program: PathBuf::from(XCRUN),
                 args: vec!["simctl".into(), "delete".into(), "unavailable".into()],
+                measure: None,
             },
             last_used: None,
         });
@@ -225,6 +230,9 @@ fn runtime_findings(json: &str) -> Vec<Finding> {
                         "delete".into(),
                         runtime.identifier.clone(),
                     ],
+                    // The system deletes the disk image afterwards, in the
+                    // background: the runtime's size is what goes.
+                    measure: None,
                 },
                 last_used: runtime.last_used_at.as_deref().and_then(crate::time::parse_utc),
             });
@@ -275,7 +283,8 @@ mod tests {
     const DEVICES: &str = r#"{"devices": {
         "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
             {"udid": "B01D04BE-C265-4B11-B857-922FA31CC3AD", "name": "iPhone 18 Pro Max", "state": "Shutdown",
-             "isAvailable": true, "dataPathSize": 3054723072, "lastUsedAt": "2026-09-24T21:48:39Z"},
+             "isAvailable": true, "dataPath": "/Users/me/Library/Developer/CoreSimulator/Devices/B01D04BE/data",
+             "dataPathSize": 3054723072, "lastUsedAt": "2026-09-24T21:48:39Z"},
             {"udid": "C4E527F9-681F-472E-9945-450B6F7DDFD6", "name": "iPhone 17", "state": "Shutdown",
              "isAvailable": true, "dataPathSize": 17000000},
             {"udid": "F7E50F9D-0E12-4E7B-B428-448E71CA7544", "name": "iPad", "state": "Booted",
@@ -310,6 +319,12 @@ mod tests {
             erase[0].action.command_line().unwrap(),
             "xcrun simctl erase B01D04BE-C265-4B11-B857-922FA31CC3AD"
         );
+        // What erasing keeps varies: the data folder is measured instead.
+        assert!(matches!(
+            &erase[0].action,
+            Action::Command { measure: Some(dir), .. }
+                if dir == Path::new("/Users/me/Library/Developer/CoreSimulator/Devices/B01D04BE/data")
+        ));
     }
 
     #[test]

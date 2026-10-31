@@ -106,9 +106,12 @@ fn prune_finding(
         detail: format!("{detail} Docker Desktop rend ensuite l'espace au Mac en quelques secondes."),
         bytes,
         safety,
+        // Docker's own figure stands: its disk image gives the space back
+        // a few seconds after the command, too late to measure.
         action: Action::Command {
             program: docker.to_path_buf(),
             args: args.iter().map(|a| (*a).to_owned()).collect(),
+            measure: None,
         },
         last_used: None,
     }

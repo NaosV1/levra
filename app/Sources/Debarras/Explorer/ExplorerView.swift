@@ -24,7 +24,7 @@ struct ExplorerView: View {
             case .idle:
                 start
             case let .scanning(files, bytes):
-                ScanningState(title: "Mesure de \(model.root.path.abbreviatingHome)…", files: files, bytes: bytes) {
+                ScanningState(title: "Mesure de \(model.root.path.abbreviatingHome)…", icon: .folder, files: files, bytes: bytes) {
                     model.cancelScan()
                 }
             case .ready:
@@ -157,7 +157,7 @@ private struct NodeRow: View {
                         if let path {
                             IconButton(icon: .arrowUpRight, help: "Afficher dans le Finder") { SystemTrash.reveal(path) }
                         }
-                        if node.kind != .smallFiles {
+                        if node.removable {
                             IconButton(icon: .delete, help: "Mettre à la corbeille", tint: Theme.danger, action: onTrash)
                         }
                     }
@@ -176,7 +176,7 @@ private struct NodeRow: View {
         .accessibilityElement(children: .contain)
         .accessibilityAction(named: "Ouvrir") { if opens { onOpen() } }
         .accessibilityAction(named: "Afficher dans le Finder") { if let path { SystemTrash.reveal(path) } }
-        .accessibilityAction(named: "Mettre à la corbeille") { if node.kind != .smallFiles { onTrash() } }
+        .accessibilityAction(named: "Mettre à la corbeille") { if node.removable { onTrash() } }
     }
 
     private var icon: Papicon {

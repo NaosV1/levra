@@ -40,10 +40,14 @@ struct CleanupOutcome: Equatable {
 final class CleanupModel {
     enum Phase: Equatable {
         case idle
-        case scanning(files: UInt64, bytes: UInt64)
+        /// `steps` has bit `n` set once `CleanupModel.steps[n]` is over.
+        case scanning(files: UInt64, bytes: UInt64, steps: UInt32)
         case ready
         case cleaning
     }
+
+    /// What the scan looks at, in the order of the progress bits.
+    static let steps = scanSteps()
 
     private(set) var phase: Phase = .idle
     private(set) var findings: [FindingInfo] = []
@@ -67,27 +71,44 @@ final class CleanupModel {
         findings.filter(\.recommended).reduce(0) { $0 + $1.bytes }
     }
 
-    /// Findings of each category, largest category first.
-    var groups: [(category: DebarrasBindings.Category, findings: [FindingInfo], bytes: UInt64)] {
-        DebarrasBindings.Category.ordered
-            .compactMap { category in
-                let items = findings.filter { $0.category == category }
-                guard !items.isEmpty else { return nil }
-                return (category, items, items.reduce(0) { $0 + $1.bytes })
+    /// How much thought a finding needs before it goes: the page sorts
+    /// findings this way, from the safest to the most delicate.
+    enum Decision: CaseIterable {
+        /// Regenerates on its own, and nothing uses it right now.
+        case safe
+        /// Regenerates too, but a project used it lately.
+        case recentlyUsed
+        case review
+        case careful
+
+        init(_ finding: FindingInfo) {
+            switch finding.safety {
+            case .safe: self = finding.recommended ? .safe : .recentlyUsed
+            case .review: self = .review
+            case .careful: self = .careful
             }
-            .sorted { $0.bytes > $1.bytes }
+        }
+    }
+
+    /// Findings by decision, each section largest first.
+    var sections: [(decision: Decision, findings: [FindingInfo], bytes: UInt64)] {
+        Decision.allCases.compactMap { decision in
+            let items = findings.filter { Decision($0) == decision }
+            guard !items.isEmpty else { return nil }
+            return (decision, items, items.reduce(0) { $0 + $1.bytes })
+        }
     }
 
     func scan() async {
         guard phase != .cleaning else { return }
         let cancel = CancelHandle()
         self.cancel = cancel
-        phase = .scanning(files: 0, bytes: 0)
+        phase = .scanning(files: 0, bytes: 0, steps: 0)
         error = nil
         outcome = nil
-        let relay = ProgressRelay { [weak self] files, bytes in
+        let relay = ProgressRelay { [weak self] files, bytes, steps in
             guard let self, case .scanning = self.phase else { return }
-            self.phase = .scanning(files: files, bytes: bytes)
+            self.phase = .scanning(files: files, bytes: bytes, steps: steps)
         }
         do {
             let report = try await background { try scanCleanup(cancel: cancel, listener: relay) }

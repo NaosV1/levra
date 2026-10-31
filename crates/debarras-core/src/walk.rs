@@ -3,7 +3,8 @@
 //! Sizes are *allocated* bytes (`st_blocks * 512`), like `du`: a sparse
 //! file such as Docker's `Docker.raw` counts for what it really occupies,
 //! hard-linked files count once per measurement, and the walk never leaves
-//! the volume it started on.
+//! the volume it started on nor enters a folder it already reaches by its
+//! main path (see [`Bounds`]).
 
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -11,8 +12,8 @@ use std::fs::{self, Metadata};
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use rayon::prelude::*;
@@ -36,6 +37,8 @@ impl CancelToken {
 pub struct Progress {
     files: AtomicU64,
     bytes: AtomicU64,
+    /// Bit `n` is set once step `n` of a scan made of steps is over.
+    steps_done: AtomicU32,
 }
 
 impl Progress {
@@ -45,6 +48,14 @@ impl Progress {
 
     pub fn bytes(&self) -> u64 {
         self.bytes.load(Ordering::Relaxed)
+    }
+
+    pub fn steps_done(&self) -> u32 {
+        self.steps_done.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn finish_step(&self, index: usize) {
+        self.steps_done.fetch_or(1 << index, Ordering::Relaxed);
     }
 
     pub(crate) fn add(&self, files: u64, bytes: u64) {
@@ -94,25 +105,25 @@ impl ScanState {
             return allocated(&meta);
         }
         let links = HardLinks::default();
-        allocated(&meta) + self.dir_contents_size(path, meta.dev(), &links)
+        allocated(&meta) + self.dir_contents_size(path, &Bounds::new(path, &meta), &links)
     }
 
-    fn dir_contents_size(&self, dir: &Path, dev: u64, links: &HardLinks) -> u64 {
-        let Some(level) = self.read_level(dir, dev, links) else {
+    fn dir_contents_size(&self, dir: &Path, bounds: &Bounds, links: &HardLinks) -> u64 {
+        let Some(level) = self.read_level(dir, bounds, links) else {
             return 0;
         };
         let files: u64 = level.files.iter().map(|f| f.bytes).sum();
         let dirs: u64 = level
             .subdirs
             .par_iter()
-            .map(|sub| sub.own_bytes + self.dir_contents_size(&sub.path, dev, links))
+            .map(|sub| sub.own_bytes + self.dir_contents_size(&sub.path, bounds, links))
             .sum();
         files + dirs
     }
 
     /// Lists one directory level. Returns `None` when the directory cannot
     /// be read or the scan was cancelled.
-    pub(crate) fn read_level(&self, dir: &Path, dev: u64, links: &HardLinks) -> Option<Level> {
+    pub(crate) fn read_level(&self, dir: &Path, bounds: &Bounds, links: &HardLinks) -> Option<Level> {
         if self.cancel.is_cancelled() {
             return None;
         }
@@ -133,11 +144,10 @@ impl ScanState {
                 continue;
             };
             if meta.is_dir() {
-                // A different device means a mount point (disk image,
-                // simulator runtime, network share): not this volume's space.
-                if meta.dev() == dev {
+                let path = entry.path();
+                if bounds.includes(&path, &meta) {
                     level.subdirs.push(SubDir {
-                        path: entry.path(),
+                        path,
                         name: entry.file_name(),
                         own_bytes: allocated(&meta),
                         modified: meta.modified().ok(),
@@ -165,6 +175,58 @@ impl ScanState {
 
 pub(crate) fn allocated(meta: &Metadata) -> u64 {
     meta.blocks() * 512
+}
+
+/// Where the data volume is mounted. Its main folders are also reachable
+/// through the "firmlinks" macOS lists in `/usr/share/firmlinks` (`/Users`,
+/// `/Applications`, `/System/Library/AssetsV2`…): the same folder under two
+/// paths, with the same device and inode.
+const DATA_VOLUME: &str = "/System/Volumes/Data";
+
+/// Where one walk may go.
+pub(crate) struct Bounds {
+    dev: u64,
+    /// Data-volume paths whose main path is inside the walk too: entering
+    /// them would count the same files twice.
+    aliases: Vec<PathBuf>,
+}
+
+impl Bounds {
+    pub(crate) fn new(root: &Path, root_meta: &Metadata) -> Self {
+        Self::with_firmlinks(root, root_meta, system_firmlinks())
+    }
+
+    /// `firmlinks` pairs each main path with its data-volume alias.
+    fn with_firmlinks(root: &Path, root_meta: &Metadata, firmlinks: &[(PathBuf, PathBuf)]) -> Self {
+        Self {
+            dev: root_meta.dev(),
+            aliases: firmlinks
+                .iter()
+                .filter(|(main, _)| main.starts_with(root))
+                .map(|(_, alias)| alias.clone())
+                .collect(),
+        }
+    }
+
+    /// A different device means a mount point (disk image, simulator
+    /// runtime, network share): not this volume's space.
+    fn includes(&self, dir: &Path, meta: &Metadata) -> bool {
+        meta.dev() == self.dev && !self.aliases.iter().any(|alias| alias == dir)
+    }
+}
+
+fn system_firmlinks() -> &'static [(PathBuf, PathBuf)] {
+    static FIRMLINKS: OnceLock<Vec<(PathBuf, PathBuf)>> = OnceLock::new();
+    FIRMLINKS.get_or_init(|| parse_firmlinks(&fs::read_to_string("/usr/share/firmlinks").unwrap_or_default()))
+}
+
+/// Lines are `/Users<TAB>Users`: the main path, then the path inside the
+/// data volume.
+fn parse_firmlinks(text: &str) -> Vec<(PathBuf, PathBuf)> {
+    text.lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(main, inside)| (PathBuf::from(main.trim()), Path::new(DATA_VOLUME).join(inside.trim())))
+        .collect()
 }
 
 #[derive(Default)]
@@ -278,6 +340,45 @@ mod tests {
         state.cancel.cancel();
 
         assert!(state.allocated_size(dir.path()) < 100_000);
+    }
+
+    #[test]
+    fn reads_the_firmlinks_list() {
+        let parsed = parse_firmlinks("/Users\tUsers\n/System/Library/AssetsV2\tSystem/Library/AssetsV2\n");
+        assert_eq!(
+            parsed,
+            vec![
+                (PathBuf::from("/Users"), PathBuf::from("/System/Volumes/Data/Users")),
+                (
+                    PathBuf::from("/System/Library/AssetsV2"),
+                    PathBuf::from("/System/Volumes/Data/System/Library/AssetsV2")
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_folder_reachable_by_two_paths_counts_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("Users/me")).unwrap();
+        fs::create_dir_all(root.join("Data/Users/me")).unwrap();
+        write_file(&root.join("Users/me/big"), 1_000_000);
+        write_file(&root.join("Data/Users/me/big"), 1_000_000);
+        let firmlinks = [(root.join("Users"), root.join("Data/Users"))];
+        let meta = fs::symlink_metadata(root).unwrap();
+
+        // Measuring the whole disk: the alias is skipped.
+        let state = ScanState::default();
+        let bounds = Bounds::with_firmlinks(root, &meta, &firmlinks);
+        let whole = state.dir_contents_size(root, &bounds, &HardLinks::default());
+        assert!((1_000_000..2_000_000).contains(&whole), "{whole}");
+
+        // Measuring the data volume alone: its folders are its own.
+        let data = root.join("Data");
+        let data_meta = fs::symlink_metadata(&data).unwrap();
+        let bounds = Bounds::with_firmlinks(&data, &data_meta, &firmlinks);
+        assert!(state.dir_contents_size(&data, &bounds, &HardLinks::default()) >= 1_000_000);
     }
 
     #[test]

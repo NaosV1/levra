@@ -42,7 +42,7 @@ final class ExplorerModel {
         self.cancel = cancel
         phase = .scanning(files: 0, bytes: 0)
         error = nil
-        let relay = ProgressRelay { [weak self] files, bytes in
+        let relay = ProgressRelay { [weak self] files, bytes, _ in
             guard let self, case .scanning = self.phase else { return }
             self.phase = .scanning(files: files, bytes: bytes)
         }

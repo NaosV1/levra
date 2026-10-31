@@ -23,8 +23,16 @@ struct CleanupView: View {
             switch model.phase {
             case .idle:
                 start
-            case let .scanning(files, bytes):
-                ScanningState(title: "Analyse du Mac…", files: files, bytes: bytes) { model.cancelScan() }
+            case let .scanning(files, bytes, done):
+                ScanningState(
+                    title: "Analyse du Mac…",
+                    icon: .clean,
+                    files: files,
+                    bytes: bytes,
+                    steps: CleanupModel.steps.enumerated().map { index, step in
+                        .init(label: step.label, done: done & (1 << index) != 0)
+                    }
+                ) { model.cancelScan() }
             case .ready, .cleaning:
                 results
             }
@@ -60,10 +68,9 @@ struct CleanupView: View {
 
     private var subtitle: String {
         switch model.phase {
-        case .idle: "Builds, caches, simulateurs, Docker… avec ce que chaque élément devient."
+        case .idle: "Ce qui prend de la place pour rien, et ce qu'il devient si tu le retires."
         case .scanning: "Lecture du disque, rien n'est modifié."
-        case .ready, .cleaning:
-            "\(model.findings.count) éléments · \(Format.bytes(model.recommendedBytes)) recommandés"
+        case .ready, .cleaning: "Du plus sûr au plus délicat. Rien ne part sans ta confirmation."
         }
     }
 
@@ -71,7 +78,7 @@ struct CleanupView: View {
         EmptyState(
             icon: .clean,
             title: "Qu'est-ce qui peut partir ?",
-            message: "Chaque élément indique sa taille réelle, s'il se régénère et l'action exacte qui sera faite. Rien n'est supprimé sans ta confirmation."
+            message: "Débarras cherche ce qui se recrée tout seul (caches, fichiers de développement…) et te dit ce qui peut partir sans risque."
         ) {
             Button("Analyser mon Mac") { Task { await model.scan() } }
                 .buttonStyle(.app(.primary))
@@ -82,7 +89,7 @@ struct CleanupView: View {
     }
 
     private var results: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 28) {
             if let outcome = model.outcome {
                 OutcomeBanner(outcome: outcome) { withAnimation(Motion.snappy) { model.dismissOutcome() } }
                     .transition(.lift(reduceMotion: reduceMotion))
@@ -90,25 +97,25 @@ struct CleanupView: View {
             if !model.denied.isEmpty {
                 FullDiskAccessBanner(deniedCount: model.denied.count)
             }
-            HStack(spacing: 12) {
-                StatTile(label: "Recommandé", value: Format.bytes(model.recommendedBytes), detail: "Sûr et inutilisé", tone: .success)
-                StatTile(label: "Sélectionné", value: Format.bytes(model.selectedBytes), detail: "\(model.selectedFindings.count) élément(s)")
-                StatTile(label: "Au total", value: Format.bytes(totalBytes), detail: "\(model.findings.count) éléments trouvés")
-            }
             if model.findings.isEmpty {
                 EmptyState(icon: .checkCircle, title: "Rien de notable", message: "Aucun élément assez gros pour valoir la peine.") {}
+            } else {
+                summary
             }
-            ForEach(Array(model.groups.enumerated()), id: \.element.category) { groupIndex, group in
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(title: group.category.label, icon: group.category.icon, trailing: Format.bytes(group.bytes))
+            let sections = model.sections
+            ForEach(Array(sections.enumerated()), id: \.element.decision) { sectionIndex, section in
+                // The cascade runs across sections, as one list.
+                let offset = sections.prefix(sectionIndex).reduce(0) { $0 + $1.findings.count }
+                VStack(alignment: .leading, spacing: 10) {
+                    DecisionHeader(decision: section.decision, count: section.findings.count, bytes: section.bytes)
                     VStack(spacing: 0) {
-                        ForEach(Array(group.findings.enumerated()), id: \.element.id) { index, finding in
+                        ForEach(Array(section.findings.enumerated()), id: \.element.id) { index, finding in
                             FindingRow(
                                 finding: finding,
                                 isSelected: binding(for: finding),
-                                isLast: index == group.findings.count - 1
+                                isLast: index == section.findings.count - 1
                             )
-                            .staggeredAppear(index: groupIndex * 3 + index)
+                            .staggeredAppear(index: offset + index)
                         }
                     }
                     .card()
@@ -116,6 +123,32 @@ struct CleanupView: View {
             }
         }
         .animation(Motion.snappy, value: model.findings.map(\.id))
+    }
+
+    /// The one figure that matters, before any list.
+    private var summary: some View {
+        HStack(spacing: 18) {
+            ZStack {
+                Circle().fill(Theme.success.opacity(0.12))
+                Icon(.clean, size: 26, weight: 1.2).foregroundStyle(Theme.success)
+            }
+            .frame(width: 60, height: 60)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(model.recommendedBytes > 0
+                    ? "\(Format.bytes(model.recommendedBytes)) à libérer sans risque"
+                    : "Rien à libérer sans risque")
+                    .font(.system(size: 22, weight: .semibold))
+                    .tracking(-0.5)
+                    .foregroundStyle(Theme.textPrimary)
+                    .contentTransition(.numericText())
+                Text("\(Format.bytes(totalBytes)) trouvés en tout. Le reste est à regarder avant de le retirer.")
+                    .textStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(20)
+        .card()
+        .accessibilityElement(children: .combine)
     }
 
     private var totalBytes: UInt64 {
@@ -167,35 +200,107 @@ struct CleanupView: View {
     }
 }
 
+extension CleanupModel.Decision {
+    var title: String {
+        switch self {
+        case .safe: "Sans risque"
+        case .recentlyUsed: "Sans risque, mais servi récemment"
+        case .review: "À vérifier"
+        case .careful: "À garder sauf certitude"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .safe: "Se recrée tout seul quand on en a besoin. Déjà coché pour toi."
+        case .recentlyUsed: "Tes projets s'en sont servis ces 30 derniers jours : le retirer t'obligerait à attendre qu'il se recrée."
+        case .review: "Récupérable, mais il faudra réinstaller, retélécharger ou rebrancher un appareil."
+        case .careful: "Peut contenir des données impossibles à recréer."
+        }
+    }
+
+    var tone: Badge.Tone {
+        switch self {
+        case .safe: .success
+        case .recentlyUsed: .accent
+        case .review: .warning
+        case .careful: .danger
+        }
+    }
+}
+
+private struct DecisionHeader: View {
+    let decision: CleanupModel.Decision
+    let count: Int
+    let bytes: UInt64
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Circle().fill(decision.tone.color).frame(width: 8, height: 8)
+                Text(decision.title).textStyle(.heading)
+                Text("\(count)").textStyle(.caption).monospacedDigit()
+                Spacer()
+                Text(Format.bytes(bytes)).textStyle(.bodyStrong).monospacedDigit()
+            }
+            Text(decision.explanation)
+                .textStyle(.secondary)
+                .padding(.leading, 16)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 4)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A finding in a sentence; how it is removed, where it lives and when it
+/// was last used open on demand.
 private struct FindingRow: View {
     let finding: FindingInfo
     @Binding var isSelected: Bool
     let isLast: Bool
+    @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         CardRow(isLast: isLast) {
-            HStack(alignment: .top, spacing: 12) {
-                Checkbox(isOn: $isSelected)
-                    .disabled(finding.action == .manual)
-                    .padding(.top, 1)
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(finding.title).textStyle(.bodyStrong).lineLimit(1)
-                        Badge(text: finding.safety.label, tone: finding.safety.tone)
-                    }
-                    Text(finding.detail)
-                        .textStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    meta
-                }
-                Spacer(minLength: 12)
-                VStack(alignment: .trailing, spacing: 6) {
-                    Text(Format.bytes(finding.bytes)).textStyle(.bodyStrong).monospacedDigit()
-                    if let path = finding.paths.first {
-                        HoverReveal {
-                            IconButton(icon: .arrowUpRight, help: "Afficher dans le Finder") { SystemTrash.reveal(path) }
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    Checkbox(isOn: $isSelected)
+                        .disabled(finding.action == .manual)
+                        .padding(.top, 1)
+                    Icon(finding.category.icon, size: 16)
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.top, 1)
+                        .help(finding.category.label)
+                        .accessibilityHidden(false)
+                        .accessibilityLabel(finding.category.label)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text(finding.title).textStyle(.bodyStrong).lineLimit(1).truncationMode(.middle)
+                            if finding.action == .manual {
+                                Badge(text: "À faire toi-même", tone: .neutral)
+                            }
                         }
+                        Text(finding.detail)
+                            .textStyle(.secondary)
+                            .lineLimit(expanded ? nil : 2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    Spacer(minLength: 12)
+                    Text(Format.bytes(finding.bytes)).textStyle(.bodyStrong).monospacedDigit()
+                    Icon(.arrowDown, size: 12)
+                        .foregroundStyle(Theme.textTertiary)
+                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                        .padding(.top, 3)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { withAnimation(Motion.snappy) { expanded.toggle() } }
+
+                if expanded {
+                    details
+                        .padding(.leading, 56)
+                        .transition(.lift(reduceMotion: reduceMotion))
                 }
             }
         }
@@ -205,33 +310,36 @@ private struct FindingRow: View {
             }
         }
         .accessibilityElement(children: .contain)
+        .accessibilityAction(named: expanded ? "Masquer les détails" : "Afficher les détails") {
+            expanded.toggle()
+        }
         .accessibilityAction(named: "Afficher dans le Finder") {
             if let path = finding.paths.first { SystemTrash.reveal(path) }
         }
     }
 
-    @ViewBuilder
-    private var meta: some View {
-        let used = Format.relative(finding.lastUsed)
-        if finding.command != nil || finding.action == .manual || used != nil {
-            HStack(spacing: 12) {
-                if let command = finding.command {
-                    HStack(spacing: 5) {
-                        Icon(.commandLine, size: 12)
-                        Text(command).textStyle(.mono)
-                    }
-                    .padding(.horizontal, 6)
-                    .frame(height: 20)
-                    .background(Theme.surfaceHover, in: RoundedRectangle(cornerRadius: 4))
-                } else if finding.action == .manual {
-                    Label { Text(finding.action.label) } icon: { Icon(.info, size: 12) }
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label { Text(finding.action.label) } icon: { Icon(.info, size: 12) }
+            if let command = finding.command {
+                HStack(spacing: 5) {
+                    Icon(.commandLine, size: 12)
+                    Text(command).textStyle(.mono).lineLimit(1).truncationMode(.middle)
                 }
-                if let used {
-                    Label { Text("Activité \(used)") } icon: { Icon(.clock, size: 12) }
+                .padding(.horizontal, 6)
+                .frame(height: 20)
+                .background(Theme.surfaceHover, in: RoundedRectangle(cornerRadius: 4))
+            }
+            if let path = finding.paths.first {
+                HStack(spacing: 6) {
+                    Text(path.abbreviatingHome).textStyle(.mono).lineLimit(1).truncationMode(.middle)
+                    IconButton(icon: .arrowUpRight, help: "Afficher dans le Finder") { SystemTrash.reveal(path) }
                 }
             }
-            .textStyle(.caption)
-            .padding(.top, 2)
+            if let used = Format.relative(finding.lastUsed) {
+                Label { Text("Dernière activité \(used)") } icon: { Icon(.clock, size: 12) }
+            }
         }
+        .textStyle(.caption)
     }
 }

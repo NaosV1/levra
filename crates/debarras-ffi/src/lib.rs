@@ -62,7 +62,9 @@ fn now() -> u64 {
 
 #[uniffi::export(with_foreign)]
 pub trait ProgressListener: Send + Sync {
-    fn on_progress(&self, files: u64, bytes: u64);
+    /// `steps_done` has bit `n` set once step `n` is over, for scans made
+    /// of steps (see [`scan_steps`]); 0 for the others.
+    fn on_progress(&self, files: u64, bytes: u64, steps_done: u32);
 }
 
 #[derive(uniffi::Object, Default)]
@@ -88,7 +90,8 @@ fn with_progress<T>(state: &core::ScanState, listener: &Arc<dyn ProgressListener
     thread::scope(|scope| {
         scope.spawn(|| {
             while !done.load(Ordering::Relaxed) {
-                listener.on_progress(state.progress.files(), state.progress.bytes());
+                let progress = &state.progress;
+                listener.on_progress(progress.files(), progress.bytes(), progress.steps_done());
                 thread::park_timeout(Duration::from_millis(150));
             }
         });
@@ -152,6 +155,33 @@ impl From<core::ExecutionReport> for ExecutionResult {
 }
 
 // MARK: Cleanup
+
+/// What the cleanup scan looks at; all parts run at once.
+#[derive(uniffi::Enum, Clone, Copy)]
+pub enum ScanStep {
+    Projects,
+    Caches,
+    Xcode,
+    Android,
+    Docker,
+    PersonalFiles,
+}
+
+/// The steps of [`scan_cleanup`], in the order of the `steps_done` bits.
+#[uniffi::export]
+pub fn scan_steps() -> Vec<ScanStep> {
+    core::catalog::steps()
+        .into_iter()
+        .map(|step| match step {
+            core::catalog::Step::Projects => ScanStep::Projects,
+            core::catalog::Step::Caches => ScanStep::Caches,
+            core::catalog::Step::Xcode => ScanStep::Xcode,
+            core::catalog::Step::Android => ScanStep::Android,
+            core::catalog::Step::Docker => ScanStep::Docker,
+            core::catalog::Step::PersonalFiles => ScanStep::PersonalFiles,
+        })
+        .collect()
+}
 
 #[derive(uniffi::Enum, Clone, Copy)]
 pub enum Safety {
@@ -286,10 +316,14 @@ pub struct NodeInfo {
     pub items: u64,
     pub modified: Option<u64>,
     pub has_children: bool,
+    /// Whether the core's guard lets it go to the Trash: macOS's own files
+    /// and the user's top-level folders do not.
+    pub removable: bool,
 }
 
 #[derive(uniffi::Object)]
 pub struct ExploreTree {
+    home: PathBuf,
     tree: core::Tree,
     denied: Vec<PathBuf>,
 }
@@ -309,6 +343,11 @@ impl ExploreTree {
             items: node.items,
             modified: node.modified.map(core::time::unix_seconds),
             has_children: !self.tree.children(id).is_empty(),
+            removable: node.kind != core::NodeKind::SmallFiles
+                && self
+                    .tree
+                    .path(id)
+                    .is_some_and(|path| core::guard::check_removable(&path, &self.home).is_ok()),
         })
     }
 
@@ -361,6 +400,7 @@ pub fn explore(
     cancel: Arc<CancelHandle>,
     listener: Arc<dyn ProgressListener>,
 ) -> Result<Arc<ExploreTree>, DebarrasError> {
+    let home = home()?;
     let state = core::ScanState::new(cancel.token.clone());
     let tree = with_progress(&state, &listener, || {
         core::explore::explore(&state, Path::new(&path), core::explore::DEFAULT_MIN_FILE_BYTES)
@@ -369,6 +409,7 @@ pub fn explore(
         message: err.to_string(),
     })?;
     Ok(Arc::new(ExploreTree {
+        home,
         tree,
         denied: state.denied(),
     }))

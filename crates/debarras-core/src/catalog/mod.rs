@@ -120,19 +120,47 @@ pub struct ScanReport {
 
 type Detector = fn(&ScanOptions, &ScanState) -> Vec<Finding>;
 
-const DETECTORS: [Detector; 6] = [
-    projects::detect,
-    caches::detect,
-    xcode::detect,
-    android::detect,
-    docker::detect,
-    user_files::detect,
+/// The parts of a scan, one per detector, which all run at once. As each
+/// ends, its bit is set in [`crate::walk::Progress::steps_done`], in this
+/// order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Step {
+    Projects,
+    Caches,
+    Xcode,
+    Android,
+    Docker,
+    PersonalFiles,
+}
+
+const DETECTORS: [(Step, Detector); 6] = [
+    (Step::Projects, projects::detect),
+    (Step::Caches, caches::detect),
+    (Step::Xcode, xcode::detect),
+    (Step::Android, android::detect),
+    (Step::Docker, docker::detect),
+    (Step::PersonalFiles, user_files::detect),
 ];
 
+/// The steps of [`scan`], in the order of their bits.
+pub fn steps() -> Vec<Step> {
+    DETECTORS.iter().map(|(step, _)| *step).collect()
+}
+
 pub fn scan(options: &ScanOptions, state: &ScanState) -> ScanReport {
-    let mut findings: Vec<Finding> = DETECTORS
+    run(&DETECTORS, options, state)
+}
+
+fn run(detectors: &[(Step, Detector)], options: &ScanOptions, state: &ScanState) -> ScanReport {
+    let mut findings: Vec<Finding> = detectors
         .par_iter()
-        .flat_map(|detect| detect(options, state))
+        .enumerate()
+        .flat_map(|(index, (_, detect))| {
+            let found = detect(options, state);
+            state.progress.finish_step(index);
+            found
+        })
         .filter(|f| f.bytes >= options.min_bytes)
         .collect();
     findings.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.id.cmp(&b.id)));
@@ -207,6 +235,20 @@ mod tests {
             action: Action::Manual,
             last_used,
         }
+    }
+
+    #[test]
+    fn each_detector_marks_its_step_done() {
+        fn nothing(_: &ScanOptions, _: &ScanState) -> Vec<Finding> {
+            Vec::new()
+        }
+        let detectors = [(Step::Xcode, nothing as Detector), (Step::Docker, nothing as Detector)];
+        let state = ScanState::default();
+        assert_eq!(state.progress.steps_done(), 0);
+
+        run(&detectors, &ScanOptions::for_home(Path::new("/nonexistent")), &state);
+        assert_eq!(state.progress.steps_done(), 0b11);
+        assert_eq!(steps().len(), DETECTORS.len());
     }
 
     #[test]

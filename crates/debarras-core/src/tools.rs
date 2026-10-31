@@ -3,7 +3,9 @@
 //!
 //! Apps launched from the Finder get a minimal `PATH`, so tools installed by
 //! Homebrew, Docker Desktop or rustup are searched in their usual places
-//! too. Programs are always executed directly, never through a shell.
+//! too. They also start in `/`, on the read-only system volume, where tools
+//! that write next to themselves (pnpm) fail: every program runs from the
+//! home folder instead, and always directly, never through a shell.
 
 use std::env;
 use std::ffi::OsString;
@@ -82,6 +84,7 @@ fn capture(program: &Path, args: &[&str], home: &Path, timeout: Duration, stream
     };
     let mut child = Command::new(program)
         .args(args)
+        .current_dir(home)
         .env("PATH", search_path(home))
         .stdin(Stdio::null())
         .stdout(stdout)
