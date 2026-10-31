@@ -17,10 +17,17 @@ final class ExplorerModel {
     private(set) var phase: Phase = .idle
     private(set) var error: String?
     /// From the scanned folder down to the one displayed.
-    private(set) var trail: [NodeInfo] = []
+    private(set) var trail: [NodeInfo] = [] {
+        didSet { refreshChildren() }
+    }
     private(set) var denied: [String] = []
     /// Items trashed since the scan: hidden, sizes above them are stale.
-    private(set) var trashed: Set<UInt64> = []
+    private(set) var trashed: Set<UInt64> = [] {
+        didSet { refreshChildren() }
+    }
+    /// Contents of the folder displayed, without what went to the Trash.
+    // gardé en cache sinon chq rendu repassait par le rust pr tt les lignes
+    private(set) var children: [NodeInfo] = []
 
     private var tree: ExploreTree?
     private var cancel: CancelHandle?
@@ -39,9 +46,12 @@ final class ExplorerModel {
         root.path == NSHomeDirectory() ? "ton dossier personnel" : root.path.abbreviatingHome
     }
 
-    var children: [NodeInfo] {
-        guard let tree, let current else { return [] }
-        return tree.children(id: current.id).filter { !trashed.contains($0.id) }
+    private func refreshChildren() {
+        guard let tree, let current else {
+            children = []
+            return
+        }
+        children = tree.children(id: current.id).filter { !trashed.contains($0.id) }
     }
 
     /// Whether `node` is one of macOS's own folders at the root of the disk.
@@ -67,9 +77,9 @@ final class ExplorerModel {
         do {
             let tree = try await background { try explore(path: path, cancel: cancel, listener: relay) }
             self.tree = tree
+            trashed = []
             trail = tree.root().map { [$0] } ?? []
             denied = tree.deniedPaths()
-            trashed = []
             phase = .ready
         } catch {
             self.error = error.message
@@ -92,7 +102,7 @@ final class ExplorerModel {
     }
 
     func path(of node: NodeInfo) -> String? {
-        tree?.path(id: node.id)
+        node.path
     }
 
     func largestFiles(minBytes: UInt64, untouchedDays: UInt32) -> [NodeInfo] {
