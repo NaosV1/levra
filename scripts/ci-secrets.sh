@@ -53,4 +53,4 @@ printf '%s' "$P12_PASSWORD" | gh secret set DEVELOPER_ID_P12_PASSWORD
 printf '%s' "$apple_id" | gh secret set NOTARY_APPLE_ID
 printf '%s' "$app_password" | gh secret set NOTARY_PASSWORD
 printf '%s' "$team" | gh secret set NOTARY_TEAM_ID
-echo "✓ Les builds de main et les tags v… seront signés et notarisés."
+echo "✓ Les builds de main seront signés, notarisés et publiés."

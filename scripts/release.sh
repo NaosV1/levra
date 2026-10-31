@@ -26,9 +26,7 @@ if [ -z "$identity" ]; then
     exit 1
 fi
 
-version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" app/Info.plist)
 app="$root/build/Levra.app"
-dmg="$root/build/Levra-$version.dmg"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -48,6 +46,9 @@ notarize() {
 echo "→ Build signé avec « $identity »"
 LEVRA_SIGN_IDENTITY="$identity" scripts/build-app.sh
 codesign --verify --strict "$app"
+# Set by build-app.sh: major.minor from app/Info.plist, then the build number.
+version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Contents/Info.plist")
+dmg="$root/build/Levra-$version.dmg"
 
 # The app is notarized and stapled on its own first, so that it also opens
 # offline once copied out of the disk image.

@@ -61,9 +61,14 @@ cp "$products/Levra" "$bundle/Contents/MacOS/Levra"
 # in Contents/Frameworks.
 install_name_tool -add_rpath @executable_path/../Frameworks "$bundle/Contents/MacOS/Levra"
 cp app/Info.plist "$bundle/Contents/Info.plist"
-# Sparkle offers an update only when its build number is higher: the
-# number of commits, which only grows on main (CI needs the full history).
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git rev-list --count HEAD)" "$bundle/Contents/Info.plist"
+# The build number is the number of commits, which only grows on main (CI
+# needs the full history): Sparkle offers an update only when it is
+# higher. The version shown is app/Info.plist's major.minor, then that
+# number: 0.1.8, 0.1.9…
+build=$(git rev-list --count HEAD)
+release=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" app/Info.plist)
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build" -c "Set :CFBundleShortVersionString $release.$build" \
+    "$bundle/Contents/Info.plist"
 cp "$root/build/Levra.icns" "$bundle/Contents/Resources/Levra.icns"
 # Sparkle's XPC services are for sandboxed apps; Levra is not one.
 sparkle="$bundle/Contents/Frameworks/Sparkle.framework"
