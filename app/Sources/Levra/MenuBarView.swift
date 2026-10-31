@@ -10,6 +10,7 @@ struct MenuBarView: View {
     @Environment(\.openSettings) private var openSettings
     @State private var confirming: Confirmation?
     @State private var trashRefusal: String?
+    @State private var dropTargeted = false
 
     private enum Confirmation {
         case clean, emptyTrash
@@ -36,6 +37,22 @@ struct MenuBarView: View {
         .padding(Self.padding)
         .frame(width: Self.width)
         .background(Theme.background)
+        .overlay {
+            if dropTargeted {
+                DropHint()
+                    .padding(6)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
+        }
+        // glisser une app sur le panneau = la désinstaller, comme sur l'icône
+        .dropDestination(for: URL.self) { urls, _ in
+            guard let url = urls.first(where: { $0.pathExtension == "app" }) else { return false }
+            NSApplication.shared.sendAction(#selector(NSResponder.cancelOperation(_:)), to: nil, from: nil)
+            model.uninstallDropped(url)
+            return true
+        } isTargeted: { targeted in
+            withAnimation(Motion.snappy) { dropTargeted = targeted }
+        }
         .animation(Motion.snappy, value: confirming)
         .task {
             model.refreshDisk()
@@ -291,6 +308,24 @@ struct MenuBarView: View {
     private func show(_ section: AppModel.Section?) {
         NSApplication.shared.sendAction(#selector(NSResponder.cancelOperation(_:)), to: nil, from: nil)
         model.showWindow(section)
+    }
+}
+
+/// Covers the panel while an app is dragged over it.
+private struct DropHint: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            Icon(.delete, size: 28, weight: 1.2).foregroundStyle(Theme.accent)
+            Text("Dépose l'app pour la désinstaller").textStyle(.heading)
+            Text("Levra te montre d'abord tout ce qu'elle laisse derrière elle.").textStyle(.caption)
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Theme.radius))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.radius)
+                .strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+        )
     }
 }
 
